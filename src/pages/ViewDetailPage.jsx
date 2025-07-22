@@ -1,7 +1,6 @@
 "use client"
-
 import { useState, useEffect, useRef } from "react"
-import { ArrowLeft, Download, Save, Edit2, Plus, X, Trash2, ChevronDown } from "lucide-react"
+import { ArrowLeft, Download, Save, Edit2, Plus, X, Trash2, ChevronDown } from 'lucide-react'
 import { Link, useSearchParams, useLocation, useNavigate } from "react-router-dom"
 import Button from "../components/ui/Button"
 import BpmnViewer from "bpmn-js/dist/bpmn-navigated-viewer.production.min.js"
@@ -31,6 +30,14 @@ export default function ViewDetailPage() {
   const [originalTestData, setOriginalTestData] = useState([])
   const [showDownloadDropdown, setShowDownloadDropdown] = useState(false)
 
+  // New editing states
+  const [editingDescription, setEditingDescription] = useState(false)
+  const [editingExpectedResult, setEditingExpectedResult] = useState(false)
+  const [editingActionSteps, setEditingActionSteps] = useState(false)
+  const [tempDescription, setTempDescription] = useState("")
+  const [tempExpectedResult, setTempExpectedResult] = useState("")
+  const [tempActionSteps, setTempActionSteps] = useState([])
+
   useEffect(() => {
     if (fileId) {
       fetchScenarioDetail()
@@ -51,13 +58,11 @@ export default function ViewDetailPage() {
     try {
       setLoading(true)
       setError(null)
-
       // Fetch BPMN file data with scenarios
       const response = await fetch(`http://localhost:8080/api/bpmn/files/${fileId}`)
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`)
       }
-
       const bpmnData = await response.json()
       setData(bpmnData)
 
@@ -91,10 +96,8 @@ export default function ViewDetailPage() {
         if (viewerRef.current) {
           viewerRef.current.destroy()
         }
-
         const viewer = new BpmnViewer({ container: containerRef.current })
         viewerRef.current = viewer
-
         await viewer.importXML(bpmnData.bpmnXml)
         extractElementNames(viewer)
 
@@ -128,7 +131,6 @@ export default function ViewDetailPage() {
 
   const processInputDataGrouped = (inputData) => {
     const testDataArray = []
-
     Object.entries(inputData).forEach(([key, value]) => {
       const cleanKey = key
         .replace(/_/g, " ")
@@ -157,7 +159,6 @@ export default function ViewDetailPage() {
               value: String(item),
             }
           })
-
           testDataArray.push({
             id: key,
             label: cleanKey,
@@ -170,7 +171,6 @@ export default function ViewDetailPage() {
             key: subKey,
             value: String(subValue),
           }))
-
           testDataArray.push({
             id: key,
             label: cleanKey,
@@ -188,7 +188,6 @@ export default function ViewDetailPage() {
         })
       }
     })
-
     return testDataArray
   }
 
@@ -196,17 +195,14 @@ export default function ViewDetailPage() {
     const registry = viewer.get("elementRegistry")
     const elements = registry.getAll()
     const nameMap = {}
-
     elements.forEach((el) => {
       nameMap[el.id] = el.businessObject?.name || el.id
     })
-
     setElementNames(nameMap)
   }
 
   const highlightPath = (rawPath) => {
     if (!viewerRef.current || !rawPath) return
-
     const canvas = viewerRef.current.get("canvas")
     const elementRegistry = viewerRef.current.get("elementRegistry")
 
@@ -222,7 +218,6 @@ export default function ViewDetailPage() {
         canvas.addMarker(id, "highlight-path")
       }
     })
-
     canvas.zoom("fit-viewport")
   }
 
@@ -279,35 +274,30 @@ export default function ViewDetailPage() {
     })
     return formattedData
   }
-    
-const handleDownloadExcel = async () => {
-  try {
-    const response = await fetch(`/api/bpmn/download/${fileId}`, {
-      method: 'GET',
-    });
 
-    if (!response.ok) {
-      throw new Error('Gagal mengunduh file Excel.');
+  const handleDownloadExcel = async () => {
+    try {
+      const response = await fetch(`/api/bpmn/download/${fileId}`, {
+        method: 'GET',
+      });
+      if (!response.ok) {
+        throw new Error('Gagal mengunduh file Excel.');
+      }
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'scenarios_export.xlsx';
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      alert(error.message);
     }
-
-    const blob = await response.blob();
-    const url = window.URL.createObjectURL(blob);
-
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'scenarios_export.xlsx';
-    a.click();
-    window.URL.revokeObjectURL(url);
-  } catch (error) {
-    alert(error.message);
-  }
-};
-
+  };
 
   const handleDownloadPDF = async () => {
     try {
       setShowDownloadDropdown(false)
-
       // Call the download API endpoint
       const response = await fetch(`http://localhost:8080/api/bpmn/download/${fileId}`, {
         method: "GET",
@@ -315,7 +305,6 @@ const handleDownloadExcel = async () => {
           "Content-Type": "application/json",
         },
       })
-
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`)
       }
@@ -323,7 +312,6 @@ const handleDownloadExcel = async () => {
       // Format test data for PDF
       const formatTestDataForPDF = (testDataList) => {
         if (!testDataList || testDataList.length === 0) return "No test data available"
-
         return testDataList
           .map((item, index) => {
             if (item.type === "array") {
@@ -356,164 +344,10 @@ const handleDownloadExcel = async () => {
       }
 
       // Create HTML content for PDF
-      const htmlContent = `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Test Scenario - ${scenario?.path_id || "Detail"}</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 20px;
-            background-color: white;
-            font-size: 12px;
-        }
-        .container {
-            max-width: 100%;
-            margin: 0 auto;
-        }
-        h1 {
-            color: #2185D5;
-            text-align: center;
-            margin-bottom: 20px;
-            border-bottom: 3px solid #2185D5;
-            padding-bottom: 10px;
-            font-size: 24px;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin: 20px 0;
-            font-size: 10px;
-        }
-        th {
-            background-color: #2185D5;
-            color: white;
-            padding: 8px 6px;
-            text-align: left;
-            font-weight: bold;
-            border: 1px solid #ddd;
-            font-size: 10px;
-        }
-        td {
-            padding: 8px 6px;
-            border: 1px solid #ddd;
-            vertical-align: top;
-            line-height: 1.3;
-            font-size: 9px;
-        }
-        .path-id {
-            font-weight: bold;
-            color: #2185D5;
-            text-align: center;
-        }
-        .summary {
-            max-width: 150px;
-            word-wrap: break-word;
-        }
-        .actions {
-            max-width: 120px;
-        }
-        .test-data {
-            max-width: 180px;
-            font-size: 8px;
-        }
-        .expected-result {
-            max-width: 120px;
-            word-wrap: break-word;
-        }
-        .input-field {
-            width: 100%;
-            min-height: 30px;
-            border: 1px solid #ccc;
-            padding: 4px;
-            font-size: 9px;
-        }
-        ul {
-            margin: 3px 0;
-            padding-left: 12px;
-        }
-        li {
-            margin: 1px 0;
-        }
-        .header-info {
-            background-color: #f8f9fa;
-            padding: 10px;
-            border-radius: 5px;
-            margin-bottom: 15px;
-            border-left: 4px solid #2185D5;
-            font-size: 11px;
-        }
-        .instructions {
-            margin-top: 20px;
-            padding: 10px;
-            background-color: #e8f4fd;
-            border-radius: 5px;
-            font-size: 10px;
-        }
-        .instructions h3 {
-            color: #2185D5;
-            margin-top: 0;
-            font-size: 12px;
-        }
-        .instructions ul {
-            margin: 5px 0;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>Test Scenario Report</h1>
-        
-        <div class="header-info">
-            <strong>File ID:</strong> ${fileId}<br>
-            <strong>Generated:</strong> ${new Date().toLocaleString()}<br>
-            <strong>Scenario Path:</strong> ${scenario?.path_id || "N/A"}
-        </div>
-        
-        <table>
-            <thead>
-                <tr>
-                    <th style="width: 60px;">Path ID</th>
-                    <th style="width: 150px;">Summary Step</th>
-                    <th style="width: 120px;">Action Performed</th>
-                    <th style="width: 180px;">Data Uji</th>
-                    <th style="width: 120px;">Expected Result</th>
-                    <th style="width: 100px;">Actual Result</th>
-                    <th style="width: 80px;">Tester</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td class="path-id">${scenario?.path_id || "-"}</td>
-                    <td class="summary">${scenario?.readable_description || "No description available"}</td>
-                    <td class="actions">${formatActionStepsForPDF(getActionSteps(scenario?.scenario_step))}</td>
-                    <td class="test-data">${formatTestDataForPDF(testDataList)}</td>
-                    <td class="expected-result">${getStatusDisplay(scenario) || "No expected result specified"}</td>
-                    <td><div class="input-field">_________________</div></td>
-                    <td><div class="input-field">_________</div></td>
-                </tr>
-            </tbody>
-        </table>
-        
-        <div class="instructions">
-            <h3>Instructions:</h3>
-            <ul>
-                <li>Fill in the "Actual Result" field with the observed outcome</li>
-                <li>Enter the tester's name in the "Tester" field</li>
-                <li>Compare actual results with expected results to determine test status</li>
-                <li>Mark as PASS/FAIL based on comparison</li>
-            </ul>
-        </div>
-    </div>
-</body>
-</html>`
+      const htmlContent = `<!DOCTYPE html><html lang="en"><head>    <meta charset="UTF-8">    <meta name="viewport" content="width=device-width, initial-scale=1.0">    <title>Test Scenario - ${scenario?.path_id || "Detail"}</title>    <style>        body {            font-family: Arial, sans-serif;            margin: 20px;            background-color: white;            font-size: 12px;        }        .container {            max-width: 100%;            margin: 0 auto;        }        h1 {            color: #2185D5;            text-align: center;            margin-bottom: 20px;            border-bottom: 3px solid #2185D5;            padding-bottom: 10px;            font-size: 24px;        }        table {            width: 100%;            border-collapse: collapse;            margin: 20px 0;            font-size: 10px;        }        th {            background-color: #2185D5;            color: white;            padding: 8px 6px;            text-align: left;            font-weight: bold;            border: 1px solid #ddd;            font-size: 10px;        }        td {            padding: 8px 6px;            border: 1px solid #ddd;            vertical-align: top;            line-height: 1.3;            font-size: 9px;        }        .path-id {            font-weight: bold;            color: #2185D5;            text-align: center;        }        .summary {            max-width: 150px;            word-wrap: break-word;        }        .actions {            max-width: 120px;        }        .test-data {            max-width: 180px;            font-size: 8px;        }        .expected-result {            max-width: 120px;            word-wrap: break-word;        }        .input-field {            width: 100%;            min-height: 30px;            border: 1px solid #ccc;            padding: 4px;            font-size: 9px;        }        ul {            margin: 3px 0;            padding-left: 12px;        }        li {            margin: 1px 0;        }        .header-info {            background-color: #f8f9fa;            padding: 10px;            border-radius: 5px;            margin-bottom: 15px;            border-left: 4px solid #2185D5;            font-size: 11px;        }        .instructions {            margin-top: 20px;            padding: 10px;            background-color: #e8f4fd;            border-radius: 5px;            font-size: 10px;        }        .instructions h3 {            color: #2185D5;            margin-top: 0;            font-size: 12px;        }        .instructions ul {            margin: 5px 0;        }    </style></head><body>    <div class="container">        <h1>Test Scenario Report</h1>                <div class="header-info">            <strong>File ID:</strong> ${fileId}<br>            <strong>Generated:</strong> ${new Date().toLocaleString()}<br>            <strong>Scenario Path:</strong> ${scenario?.path_id || "N/A"}        </div>                <table>            <thead>                <tr>                    <th style="width: 60px;">Path ID</th>                    <th style="width: 150px;">Summary Step</th>                    <th style="width: 120px;">Action Performed</th>                    <th style="width: 180px;">Data Uji</th>                    <th style="width: 120px;">Expected Result</th>                    <th style="width: 100px;">Actual Result</th>                    <th style="width: 80px;">Tester</th>                </tr>            </thead>            <tbody>                <tr>                    <td class="path-id">${scenario?.path_id || "-"}</td>                    <td class="summary">${scenario?.readable_description || "No description available"}</td>                    <td class="actions">${formatActionStepsForPDF(getActionSteps(scenario?.scenario_step))}</td>                    <td class="test-data">${formatTestDataForPDF(testDataList)}</td>                    <td class="expected-result">${getStatusDisplay(scenario) || "No expected result specified"}</td>                    <td><div class="input-field">_________________</div></td>                    <td><div class="input-field">_________</div></td>                </tr>            </tbody>        </table>                <div class="instructions">            <h3>Instructions:</h3>            <ul>                <li>Fill in the "Actual Result" field with the observed outcome</li>                <li>Enter the tester's name in the "Tester" field</li>                <li>Compare actual results with expected results to determine test status</li>                <li>Mark as PASS/FAIL based on comparison</li>            </ul>        </div>    </div></body></html>`
 
       // Use html2pdf library
       const html2pdf = (await import("https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/+esm")).default
-
       const opt = {
         margin: 0.5,
         filename: `test-scenario-${scenario?.path_id || "detail"}.pdf`,
@@ -534,12 +368,92 @@ const handleDownloadExcel = async () => {
 
       // Clean up
       document.body.removeChild(tempDiv)
-
       console.log("PDF download completed successfully")
     } catch (err) {
       console.error("PDF download failed:", err)
       alert("PDF download failed. Please try again.")
     }
+  }
+
+  // New edit handlers
+  const handleEditDescription = () => {
+    setEditingDescription(true)
+    setTempDescription(scenario?.readable_description || "")
+  }
+
+  const handleSaveDescription = () => {
+    setScenario(prev => ({
+      ...prev,
+      readable_description: tempDescription
+    }))
+    setEditingDescription(false)
+    setSaveSuccess(false)
+  }
+
+  const handleCancelDescription = () => {
+    setEditingDescription(false)
+    setTempDescription("")
+  }
+
+  const handleEditExpectedResult = () => {
+    setEditingExpectedResult(true)
+    setTempExpectedResult(scenario?.expected_result?.message || "")
+  }
+
+  const handleSaveExpectedResult = () => {
+    setScenario(prev => ({
+      ...prev,
+      expected_result: {
+        ...prev?.expected_result,
+        message: tempExpectedResult
+      }
+    }))
+    setEditingExpectedResult(false)
+    setSaveSuccess(false)
+  }
+
+  const handleCancelExpectedResult = () => {
+    setEditingExpectedResult(false)
+    setTempExpectedResult("")
+  }
+
+  const handleEditActionSteps = () => {
+    setEditingActionSteps(true)
+    const currentSteps = getActionSteps(scenario?.scenario_step)
+    setTempActionSteps(currentSteps.length > 0 ? currentSteps : [""])
+  }
+
+  const handleSaveActionSteps = () => {
+    const formattedSteps = tempActionSteps
+      .filter(step => step.trim() !== "")
+      .map((step, index) => `${index + 1}. ${step}`)
+      .join("\n")
+    
+    setScenario(prev => ({
+      ...prev,
+      scenario_step: formattedSteps
+    }))
+    setEditingActionSteps(false)
+    setSaveSuccess(false)
+  }
+
+  const handleCancelActionSteps = () => {
+    setEditingActionSteps(false)
+    setTempActionSteps([])
+  }
+
+  const addActionStep = () => {
+    setTempActionSteps([...tempActionSteps, ""])
+  }
+
+  const removeActionStep = (index) => {
+    setTempActionSteps(tempActionSteps.filter((_, i) => i !== index))
+  }
+
+  const updateActionStep = (index, value) => {
+    const newSteps = [...tempActionSteps]
+    newSteps[index] = value
+    setTempActionSteps(newSteps)
   }
 
   const handleEditTestData = () => {
@@ -560,14 +474,11 @@ const handleDownloadExcel = async () => {
     // If editing, save the data
     setSaving(true)
     setSaveSuccess(false)
-
     try {
       // Convert edited test data to API format
       const convertedData = convertTestDataToApiFormat(testDataList)
-
       // Determine pathId to use
       const pathId = scenario?.path_id || scenarioId || `P${pathIndex + 1}`
-
       console.log("Saving test data:", {
         fileId,
         pathId,
@@ -578,7 +489,6 @@ const handleDownloadExcel = async () => {
       const response = await bpmnApi.updateScenario(fileId, pathId, {
         input_data: convertedData,
       })
-
       console.log("Save response:", response.data)
 
       // Update original data in state to match what was saved
@@ -631,7 +541,6 @@ const handleDownloadExcel = async () => {
 
   const handleResetHighlight = () => {
     if (!viewerRef.current) return
-
     const canvas = viewerRef.current.get("canvas")
     const elementRegistry = viewerRef.current.get("elementRegistry")
 
@@ -772,7 +681,6 @@ const handleDownloadExcel = async () => {
   const addSubField = (parentId, type = "primitive") => {
     const parentItem = testDataList.find((item) => item.id === parentId)
     if (!parentItem) return
-
     const newItem = {
       id: `${parentId}_sub_${Date.now()}`,
       label: "New Sub Field",
@@ -855,7 +763,6 @@ const handleDownloadExcel = async () => {
 
   const renderEditTestDataItem = (item, index) => {
     const indentLevel = (item.level || 0) * 20 // 20px per level
-
     if (item.type === "array") {
       return (
         <div
@@ -876,38 +783,41 @@ const handleDownloadExcel = async () => {
                 <div className="flex items-center space-x-2">
                   <button
                     onClick={() => addSubField(item.id, "primitive")}
-                    className="text-blue-600 hover:text-blue-800 p-1 text-xs"
+                    className="text-blue-600 hover:text-blue-800 p-1 text-xs rounded-md hover:bg-blue-100 transition-colors"
                     title="Add Sub Field"
                   >
                     + Field
                   </button>
                   <button
                     onClick={() => addSubField(item.id, "object")}
-                    className="text-green-600 hover:text-green-800 p-1 text-xs"
+                    className="text-green-600 hover:text-green-800 p-1 text-xs rounded-md hover:bg-green-100 transition-colors"
                     title="Add Sub Object"
                   >
                     + Object
                   </button>
                   <button
                     onClick={() => addSubField(item.id, "array")}
-                    className="text-purple-600 hover:text-purple-800 p-1 text-xs"
+                    className="text-purple-600 hover:text-purple-800 p-1 text-xs rounded-md hover:bg-purple-100 transition-colors"
                     title="Add Sub Array"
                   >
                     + Array
                   </button>
-                  <button onClick={() => removeTestDataItem(item.id)} className="text-red-500 hover:text-red-700 p-1">
+                  <button 
+                    onClick={() => removeTestDataItem(item.id)} 
+                    className="text-red-500 hover:text-red-700 p-1 rounded-md hover:bg-red-100 transition-colors"
+                  >
                     <Trash2 className="w-4 h-4" />
                   </button>
                 </div>
               </div>
               <div className="space-y-2">
                 {item.value.map((arrayItem, arrayIndex) => (
-                  <div key={arrayItem.id} className="bg-white p-3 rounded border">
+                  <div key={arrayItem.id} className="bg-white p-3 rounded-lg border shadow-sm">
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-blue-600 font-medium text-sm">Item {arrayIndex + 1}</span>
                       <button
                         onClick={() => removeArrayItem(item.id, arrayIndex)}
-                        className="text-red-500 hover:text-red-700 p-1"
+                        className="text-red-500 hover:text-red-700 p-1 rounded-md hover:bg-red-100 transition-colors"
                       >
                         <X className="w-3 h-3" />
                       </button>
@@ -922,7 +832,7 @@ const handleDownloadExcel = async () => {
                               onChange={(e) =>
                                 updateArrayItemProperty(item.id, arrayIndex, propIndex, "key", e.target.value)
                               }
-                              className="flex-1 px-2 py-1 border border-gray-300 rounded text-xs"
+                              className="flex-1 px-2 py-1 border border-gray-300 rounded-md text-xs focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                               placeholder="Property name"
                             />
                             <span className="text-gray-500">:</span>
@@ -932,7 +842,7 @@ const handleDownloadExcel = async () => {
                               onChange={(e) =>
                                 updateArrayItemProperty(item.id, arrayIndex, propIndex, "value", e.target.value)
                               }
-                              className="flex-1 px-2 py-1 border border-gray-300 rounded text-xs"
+                              className="flex-1 px-2 py-1 border border-gray-300 rounded-md text-xs focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                               placeholder="Value"
                             />
                           </div>
@@ -951,7 +861,7 @@ const handleDownloadExcel = async () => {
                             ),
                           )
                         }}
-                        className="w-full px-2 py-1 border border-gray-300 rounded text-xs"
+                        className="w-full px-2 py-1 border border-gray-300 rounded-md text-xs focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                         placeholder="Value"
                       />
                     )}
@@ -959,7 +869,7 @@ const handleDownloadExcel = async () => {
                 ))}
                 <button
                   onClick={() => addArrayItem(item.id)}
-                  className="flex items-center space-x-1 text-blue-600 hover:text-blue-800 text-sm"
+                  className="flex items-center space-x-1 text-blue-600 hover:text-blue-800 text-sm px-3 py-1 rounded-md hover:bg-blue-100 transition-colors"
                 >
                   <Plus className="w-3 h-3" />
                   <span>Add Item</span>
@@ -991,38 +901,41 @@ const handleDownloadExcel = async () => {
                 <div className="flex items-center space-x-2">
                   <button
                     onClick={() => addSubField(item.id, "primitive")}
-                    className="text-blue-600 hover:text-blue-800 p-1 text-xs"
+                    className="text-blue-600 hover:text-blue-800 p-1 text-xs rounded-md hover:bg-blue-100 transition-colors"
                     title="Add Sub Field"
                   >
                     + Field
                   </button>
                   <button
                     onClick={() => addSubField(item.id, "object")}
-                    className="text-green-600 hover:text-green-800 p-1 text-xs"
+                    className="text-green-600 hover:text-green-800 p-1 text-xs rounded-md hover:bg-green-100 transition-colors"
                     title="Add Sub Object"
                   >
                     + Object
                   </button>
                   <button
                     onClick={() => addSubField(item.id, "array")}
-                    className="text-purple-600 hover:text-purple-800 p-1 text-xs"
+                    className="text-purple-600 hover:text-purple-800 p-1 text-xs rounded-md hover:bg-purple-100 transition-colors"
                     title="Add Sub Array"
                   >
                     + Array
                   </button>
-                  <button onClick={() => removeTestDataItem(item.id)} className="text-red-500 hover:text-red-700 p-1">
+                  <button 
+                    onClick={() => removeTestDataItem(item.id)} 
+                    className="text-red-500 hover:text-red-700 p-1 rounded-md hover:bg-red-100 transition-colors"
+                  >
                     <Trash2 className="w-4 h-4" />
                   </button>
                 </div>
               </div>
               <div className="space-y-2">
                 {item.value.map((objItem, objIndex) => (
-                  <div key={objIndex} className="bg-white p-2 rounded flex items-center space-x-2">
+                  <div key={objIndex} className="bg-white p-2 rounded-lg flex items-center space-x-2 shadow-sm">
                     <input
                       type="text"
                       value={objItem.key}
                       onChange={(e) => updateObjectProperty(item.id, objIndex, "key", e.target.value)}
-                      className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
+                      className="flex-1 px-2 py-1 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-green-500 focus:border-transparent"
                       placeholder="Property name"
                     />
                     <span className="text-gray-500">:</span>
@@ -1030,12 +943,12 @@ const handleDownloadExcel = async () => {
                       type="text"
                       value={objItem.value}
                       onChange={(e) => updateObjectProperty(item.id, objIndex, "value", e.target.value)}
-                      className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
+                      className="flex-1 px-2 py-1 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-green-500 focus:border-transparent"
                       placeholder="Value"
                     />
                     <button
                       onClick={() => removeObjectProperty(item.id, objIndex)}
-                      className="text-red-500 hover:text-red-700 p-1"
+                      className="text-red-500 hover:text-red-700 p-1 rounded-md hover:bg-red-100 transition-colors"
                     >
                       <X className="w-3 h-3" />
                     </button>
@@ -1043,7 +956,7 @@ const handleDownloadExcel = async () => {
                 ))}
                 <button
                   onClick={() => addObjectProperty(item.id)}
-                  className="flex items-center space-x-1 text-green-600 hover:text-green-800 text-sm"
+                  className="flex items-center space-x-1 text-green-600 hover:text-green-800 text-sm px-3 py-1 rounded-md hover:bg-green-100 transition-colors"
                 >
                   <Plus className="w-3 h-3" />
                   <span>Add Property</span>
@@ -1077,32 +990,35 @@ const handleDownloadExcel = async () => {
               type="text"
               value={item.value}
               onChange={(e) => updatePrimitiveValue(item.id, e.target.value)}
-              className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
+              className="flex-1 px-2 py-1 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-gray-500 focus:border-transparent"
               placeholder="Value"
             />
             <div className="flex items-center space-x-1">
               <button
                 onClick={() => addSubField(item.id, "primitive")}
-                className="text-blue-600 hover:text-blue-800 p-1 text-xs"
+                className="text-blue-600 hover:text-blue-800 p-1 text-xs rounded-md hover:bg-blue-100 transition-colors"
                 title="Add Sub Field"
               >
                 + Field
               </button>
               <button
                 onClick={() => addSubField(item.id, "object")}
-                className="text-green-600 hover:text-green-800 p-1 text-xs"
+                className="text-green-600 hover:text-green-800 p-1 text-xs rounded-md hover:bg-green-100 transition-colors"
                 title="Add Sub Object"
               >
                 + Obj
               </button>
               <button
                 onClick={() => addSubField(item.id, "array")}
-                className="text-purple-600 hover:text-purple-800 p-1 text-xs"
+                className="text-purple-600 hover:text-purple-800 p-1 text-xs rounded-md hover:bg-purple-100 transition-colors"
                 title="Add Sub Array"
               >
                 + Arr
               </button>
-              <button onClick={() => removeTestDataItem(item.id)} className="text-red-500 hover:text-red-700 p-1">
+              <button 
+                onClick={() => removeTestDataItem(item.id)} 
+                className="text-red-500 hover:text-red-700 p-1 rounded-md hover:bg-red-100 transition-colors"
+              >
                 <Trash2 className="w-4 h-4" />
               </button>
             </div>
@@ -1114,11 +1030,9 @@ const handleDownloadExcel = async () => {
 
   const convertTestDataToApiFormat = (testDataList) => {
     const apiData = {}
-
     testDataList.forEach((item) => {
       // Convert the clean label back to API key format
       const apiKey = item.id.startsWith("new_") ? item.label.toLowerCase().replace(/\s+/g, "_") : item.id
-
       if (item.type === "primitive") {
         // Simple key-value pair
         apiData[apiKey] = item.value
@@ -1147,7 +1061,6 @@ const handleDownloadExcel = async () => {
         apiData[apiKey] = arrayData
       }
     })
-
     return apiData
   }
 
@@ -1168,7 +1081,7 @@ const handleDownloadExcel = async () => {
         <div className="text-center">
           <p className="text-red-600 mb-4">{error}</p>
           <Link to="/scenario" state={{ fileId }}>
-            <Button className="bg-[#2185D5] hover:bg-[#1D5D9B] text-white">Go Back to Scenarios</Button>
+            <Button className="bg-[#2185D5] hover:bg-[#1D5D9B] text-white rounded-lg px-4 py-2 transition-colors">Go Back to Scenarios</Button>
           </Link>
         </div>
       </div>
@@ -1184,7 +1097,7 @@ const handleDownloadExcel = async () => {
             <div className="flex items-center space-x-8">
               <div className="flex items-center space-x-2">
                 <div
-                  className="w-10 h-10 rounded flex items-center justify-center"
+                  className="w-10 h-10 rounded-lg flex items-center justify-center"
                   style={{ backgroundColor: "#2185D5" }}
                 >
                   <div className="text-white">
@@ -1201,21 +1114,21 @@ const handleDownloadExcel = async () => {
               <nav className="flex space-x-8">
                 <Link
                   to="/"
-                  className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors"
+                  className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors rounded-lg hover:bg-gray-100"
                   onMouseEnter={(e) => (e.currentTarget.style.color = "#5CC2F2")}
                   onMouseLeave={(e) => (e.currentTarget.style.color = "#6b7280")}
                 >
                   Upload BPMN
                 </Link>
                 <div
-                  className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md"
+                  className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg"
                   style={{ backgroundColor: "#2185D5" }}
                 >
                   Alur Skenario
                 </div>
                 <Link
                   to="/history"
-                  className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors"
+                  className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors rounded-lg hover:bg-gray-100"
                   onMouseEnter={(e) => (e.currentTarget.style.color = "#5CC2F2")}
                   onMouseLeave={(e) => (e.currentTarget.style.color = "#6b7280")}
                 >
@@ -1228,12 +1141,12 @@ const handleDownloadExcel = async () => {
       </header>
 
       {/* Main Content */}
-      <div className="max-w-5xl mx-auto p-6 bg-white">
+      <div className="max-w-5xl mx-auto p-6 bg-white rounded-lg shadow-sm">
         {/* Back Button */}
         <div className="mb-8">
           <Link to="/scenario" state={{ fileId }}>
             <button
-              className="flex items-center space-x-2 text-gray-600 transition-colors bg-transparent border-none cursor-pointer"
+              className="flex items-center space-x-2 text-gray-600 transition-colors bg-transparent border-none cursor-pointer px-3 py-2 rounded-lg hover:bg-gray-100"
               onMouseEnter={(e) => (e.currentTarget.style.color = "#5CC2F2")}
               onMouseLeave={(e) => (e.currentTarget.style.color = "#6b7280")}
             >
@@ -1249,7 +1162,7 @@ const handleDownloadExcel = async () => {
             <div className="flex items-center justify-between mb-2">
               <label className="text-sm font-medium text-gray-700">BPMN Path</label>
             </div>
-            <div className="border-2 border-gray-300 rounded-lg p-6 bg-gray-50 min-h-[400px] flex items-center justify-center">
+            <div className="border-2 border-gray-300 rounded-xl p-6 bg-gray-50 min-h-[400px] flex items-center justify-center">
               <div ref={containerRef} className="w-full h-[400px] rounded-lg overflow-hidden bg-white" />
             </div>
           </div>
@@ -1260,31 +1173,135 @@ const handleDownloadExcel = async () => {
               <label className="text-sm font-medium text-gray-500">Deskripsi Skenario</label>
             </div>
             <div className="col-span-3">
-              <div className="text-sm text-gray-700 leading-relaxed">
-                {scenario?.readable_description ||
-                  "Lorem ipsum is simply dummy text of the printing and typesetting industry. Lorem ipsum has been the industry's standard dummy text ever since the 1500s, when an unknown printer took a galley of type. It was popularised in the 1960s with the release of Letraset sheets containing Lorem ipsum passages, and more recently with desktop publishing software like Aldus PageMaker including versions of Lorem ipsum."}
-              </div>
+              {!editingDescription ? (
+                <div className="space-y-3">
+                  <div className="text-sm text-gray-700 leading-relaxed p-4 bg-gray-50 rounded-lg">
+                    {scenario?.readable_description ||
+                      "Lorem ipsum is simply dummy text of the printing and typesetting industry. Lorem ipsum has been the industry's standard dummy text ever since the 1500s, when an unknown printer took a galley of type. It was popularised in the 1960s with the release of Letraset sheets containing Lorem ipsum passages, and more recently with desktop publishing software like Aldus PageMaker including versions of Lorem ipsum."}
+                  </div>
+                  <Button
+                    onClick={handleEditDescription}
+                    className="text-white text-sm px-4 py-2 rounded-lg transition-colors"
+                    style={{ backgroundColor: "#2185D5" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#1D5D9B")}
+                    onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "#2185D5")}
+                  >
+                    <Edit2 className="w-4 h-4 mr-2" />
+                    Edit Description
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <textarea
+                    value={tempDescription}
+                    onChange={(e) => setTempDescription(e.target.value)}
+                    className="w-full p-4 border border-gray-300 rounded-lg text-sm leading-relaxed focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                    rows={6}
+                    placeholder="Enter scenario description..."
+                  />
+                  <div className="flex space-x-2">
+                    <Button
+                      onClick={handleSaveDescription}
+                      className="text-white text-sm px-4 py-2 rounded-lg transition-colors"
+                      style={{ backgroundColor: "#28a745" }}
+                      onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#218838")}
+                      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "#28a745")}
+                    >
+                      <Save className="w-4 h-4 mr-2" />
+                      Save
+                    </Button>
+                    <Button
+                      onClick={handleCancelDescription}
+                      className="text-sm px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Action Performed - Fixed formatting */}
+          {/* Action Performed */}
           <div className="grid grid-cols-4 gap-12 items-start">
             <div className="col-span-1">
               <label className="text-sm font-medium text-gray-500">Action Performed</label>
             </div>
             <div className="col-span-3">
-              <div className="text-sm text-gray-600 space-y-2">
-                {getActionSteps(scenario?.scenario_step).length > 0 ? (
-                  getActionSteps(scenario?.scenario_step).map((step, index) => (
-                    <div key={index} className="flex items-start">
-                      <span className="mr-3 text-blue-600 font-medium">{index + 1}.</span>
-                      <span className="flex-1">{step}</span>
-                    </div>
-                  ))
-                ) : (
-                  <p className="text-gray-400 italic">Langkah skenario tidak tersedia.</p>
-                )}
-              </div>
+              {!editingActionSteps ? (
+                <div className="space-y-3">
+                  <div className="text-sm text-gray-600 space-y-2 p-4 bg-gray-50 rounded-lg">
+                    {getActionSteps(scenario?.scenario_step).length > 0 ? (
+                      getActionSteps(scenario?.scenario_step).map((step, index) => (
+                        <div key={index} className="flex items-start">
+                          <span className="mr-3 text-blue-600 font-medium">{index + 1}.</span>
+                          <span className="flex-1">{step}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-gray-400 italic">Langkah skenario tidak tersedia.</p>
+                    )}
+                  </div>
+                  <Button
+                    onClick={handleEditActionSteps}
+                    className="text-white text-sm px-4 py-2 rounded-lg transition-colors"
+                    style={{ backgroundColor: "#2185D5" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#1D5D9B")}
+                    onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "#2185D5")}
+                  >
+                    <Edit2 className="w-4 h-4 mr-2" />
+                    Edit Action Steps
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="space-y-2">
+                    {tempActionSteps.map((step, index) => (
+                      <div key={index} className="flex items-center space-x-2">
+                        <span className="text-blue-600 font-medium text-sm w-6">{index + 1}.</span>
+                        <input
+                          type="text"
+                          value={step}
+                          onChange={(e) => updateActionStep(index, e.target.value)}
+                          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          placeholder={`Action step ${index + 1}...`}
+                        />
+                        <button
+                          onClick={() => removeActionStep(index)}
+                          className="text-red-500 hover:text-red-700 p-2 rounded-lg hover:bg-red-100 transition-colors"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    onClick={addActionStep}
+                    className="flex items-center space-x-1 text-blue-600 hover:text-blue-800 text-sm px-3 py-2 rounded-lg hover:bg-blue-100 transition-colors"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Add Step</span>
+                  </button>
+                  <div className="flex space-x-2 pt-2">
+                    <Button
+                      onClick={handleSaveActionSteps}
+                      className="text-white text-sm px-4 py-2 rounded-lg transition-colors"
+                      style={{ backgroundColor: "#28a745" }}
+                      onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#218838")}
+                      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "#28a745")}
+                    >
+                      <Save className="w-4 h-4 mr-2" />
+                      Save
+                    </Button>
+                    <Button
+                      onClick={handleCancelActionSteps}
+                      className="text-sm px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -1301,12 +1318,12 @@ const handleDownloadExcel = async () => {
                     {testDataList.length > 0 ? (
                       testDataList.map((item, index) => renderTestDataItem(item, index))
                     ) : (
-                      <p className="text-gray-400 italic">Data pengujian tidak tersedia.</p>
+                      <p className="text-gray-400 italic p-4 bg-gray-50 rounded-lg">Data pengujian tidak tersedia.</p>
                     )}
                   </div>
                   <Button
                     onClick={handleEditTestData}
-                    className="text-white text-sm px-4 py-2 transition-colors"
+                    className="text-white text-sm px-4 py-2 rounded-lg transition-colors"
                     style={{ backgroundColor: "#2185D5" }}
                     onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#1D5D9B")}
                     onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "#2185D5")}
@@ -1318,41 +1335,39 @@ const handleDownloadExcel = async () => {
               ) : (
                 // Edit mode - Full functionality with nested support
                 <div className="space-y-4">
-                  <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                  <div className="bg-blue-50 p-4 rounded-xl border border-blue-200">
                     <h4 className="font-medium text-blue-800 mb-3">Add New Data Fields</h4>
                     <div className="flex flex-wrap gap-2">
                       <Button
                         onClick={() => addNestedField(null, "primitive")}
-                        className="text-sm px-3 py-2 bg-white border-blue-300 text-blue-700 hover:bg-blue-50 border"
+                        className="text-sm px-3 py-2 bg-white border-blue-300 text-blue-700 hover:bg-blue-50 border rounded-lg transition-colors"
                       >
                         <Plus className="w-4 h-4 mr-1" />
                         Add Field
                       </Button>
                       <Button
                         onClick={() => addNestedField(null, "object")}
-                        className="text-sm px-3 py-2 bg-white border-green-300 text-green-700 hover:bg-green-50 border"
+                        className="text-sm px-3 py-2 bg-white border-green-300 text-green-700 hover:bg-green-50 border rounded-lg transition-colors"
                       >
                         <Plus className="w-4 h-4 mr-1" />
                         Add Object
                       </Button>
                       <Button
                         onClick={() => addNestedField(null, "array")}
-                        className="text-sm px-3 py-2 bg-white border-purple-300 text-purple-700 hover:bg-purple-50 border"
+                        className="text-sm px-3 py-2 bg-white border-purple-300 text-purple-700 hover:bg-purple-50 border rounded-lg transition-colors"
                       >
                         <Plus className="w-4 h-4 mr-1" />
                         Add Array
                       </Button>
                     </div>
                   </div>
-
                   <div className="space-y-3">
                     {testDataList.map((item, index) => renderEditTestDataItem(item, index))}
                   </div>
-
                   <div className="flex justify-between items-center pt-4 border-t border-gray-200">
                     <Button
                       onClick={handleCancelEdit}
-                      className="text-sm px-4 py-2 bg-transparent border-gray-300 text-gray-700 border"
+                      className="text-sm px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
                     >
                       Cancel
                     </Button>
@@ -1371,7 +1386,51 @@ const handleDownloadExcel = async () => {
               <label className="text-sm font-medium text-gray-500">Expected Result</label>
             </div>
             <div className="col-span-3">
-              <div className="text-sm text-gray-700 py-2">{getStatusDisplay(scenario)}</div>
+              {!editingExpectedResult ? (
+                <div className="space-y-3">
+                  <div className="text-sm text-gray-700 py-2 p-4 bg-gray-50 rounded-lg">
+                    {getStatusDisplay(scenario)}
+                  </div>
+                  <Button
+                    onClick={handleEditExpectedResult}
+                    className="text-white text-sm px-4 py-2 rounded-lg transition-colors"
+                    style={{ backgroundColor: "#2185D5" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#1D5D9B")}
+                    onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "#2185D5")}
+                  >
+                    <Edit2 className="w-4 h-4 mr-2" />
+                    Edit Expected Result
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <textarea
+                    value={tempExpectedResult}
+                    onChange={(e) => setTempExpectedResult(e.target.value)}
+                    className="w-full p-4 border border-gray-300 rounded-lg text-sm leading-relaxed focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                    rows={4}
+                    placeholder="Enter expected result..."
+                  />
+                  <div className="flex space-x-2">
+                    <Button
+                      onClick={handleSaveExpectedResult}
+                      className="text-white text-sm px-4 py-2 rounded-lg transition-colors"
+                      style={{ backgroundColor: "#28a745" }}
+                      onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#218838")}
+                      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "#28a745")}
+                    >
+                      <Save className="w-4 h-4 mr-2" />
+                      Save
+                    </Button>
+                    <Button
+                      onClick={handleCancelExpectedResult}
+                      className="text-sm px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -1381,7 +1440,7 @@ const handleDownloadExcel = async () => {
             <div className="relative">
               <Button
                 onClick={() => setShowDownloadDropdown(!showDownloadDropdown)}
-                className="flex items-center space-x-2 text-sm text-white border-0 transition-colors bg-transparent"
+                className="flex items-center space-x-2 text-sm text-white border-0 transition-colors bg-transparent rounded-lg"
                 style={{ backgroundColor: "#28a745" }}
                 onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#218838")}
                 onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "#28a745")}
@@ -1390,21 +1449,20 @@ const handleDownloadExcel = async () => {
                 <span>Download</span>
                 <ChevronDown className="w-4 h-4" />
               </Button>
-
               {/* Dropdown Menu */}
               {showDownloadDropdown && (
-                <div className="absolute left-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-50">
+                <div className="absolute left-0 mt-2 w-48 bg-white border border-gray-200 rounded-xl shadow-lg z-50">
                   <div className="py-1">
                     <button
                       onClick={handleDownloadExcel}
-                      className="flex items-center w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+                      className="flex items-center w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors rounded-lg mx-1"
                     >
                       <span className="mr-3">📊</span>
                       <span>Download Excel</span>
                     </button>
                     <button
                       onClick={handleDownloadPDF}
-                      className="flex items-center w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+                      className="flex items-center w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors rounded-lg mx-1"
                     >
                       <span className="mr-3">📄</span>
                       <span>Download PDF</span>
@@ -1418,7 +1476,7 @@ const handleDownloadExcel = async () => {
             <Button
               onClick={handleSaveChanges}
               disabled={saving}
-              className="flex items-center space-x-2 text-white text-sm px-6 py-2 transition-colors font-medium"
+              className="flex items-center space-x-2 text-white text-sm px-6 py-2 transition-colors font-medium rounded-lg"
               style={{ backgroundColor: saving ? "#A0AEC0" : "#2185D5" }}
               onMouseEnter={(e) => {
                 if (!saving) {
@@ -1458,8 +1516,7 @@ const handleDownloadExcel = async () => {
       {showDownloadDropdown && <div className="fixed inset-0 z-40" onClick={() => setShowDownloadDropdown(false)} />}
 
       {/* Enhanced CSS for BPMN highlighting */}
-      <style>{`
-/* Enhanced CSS for BPMN highlighting - ONLY highlight elements in the selected path */
+      <style>{`/* Enhanced CSS for BPMN highlighting - ONLY highlight elements in the selected path */
 /* Start Events - Light Teal - ONLY when highlighted */
 .djs-element.highlight-path[data-element-id*="StartEvent"] .djs-visual > circle,
 .djs-element.highlight-path[data-element-id*="Event_"] .djs-visual > circle {
@@ -1523,8 +1580,7 @@ const handleDownloadExcel = async () => {
   fill: black !important;
   vector-effect: non-scaling-stroke !important;
   shape-rendering: geometricPrecision !important;
-}
-`}</style>
+}`}</style>
     </div>
   )
 }
