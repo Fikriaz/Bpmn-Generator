@@ -356,14 +356,15 @@ export default function ScenarioPage() {
                       }`}
                       onClick={() => handleRowClick(index)}
                     >
-                      <TableCell className="font-medium">{scenario.path_id || `P${index + 1}`}</TableCell>
-                  <TableCell className="max-w-md">
-  <div className="line-clamp-3">
-    {scenario.summary?.slice(0, 1000) ||
-      getSummary(scenario.rawPath) ||
-      "-"}
+                      <TableCell className="font-medium ">{scenario.path_id || `P${index + 1}`}</TableCell>
+           <TableCell className="align-top max-w-md p-2">
+  <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">
+    {scenario.summary && scenario.summary.trim() !== "" 
+      ? scenario.summary 
+      : "-"}
   </div>
 </TableCell>
+
 
                       <TableCell>
                         <span className={`font-medium ${status.color}`}>{status.text}</span>
