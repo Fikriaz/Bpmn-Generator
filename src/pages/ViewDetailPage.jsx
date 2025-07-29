@@ -1,6 +1,7 @@
 "use client"
+
 import { useState, useEffect, useRef } from "react"
-import { ArrowLeft, Download, Save, Edit2, Plus, X, Trash2, ChevronDown } from 'lucide-react'
+import { ArrowLeft, Download, Save, Edit2, Plus, X, Trash2, ChevronDown } from "lucide-react"
 import { Link, useSearchParams, useLocation, useNavigate } from "react-router-dom"
 import Button from "../components/ui/Button"
 import BpmnViewer from "bpmn-js/dist/bpmn-navigated-viewer.production.min.js"
@@ -58,11 +59,13 @@ export default function ViewDetailPage() {
     try {
       setLoading(true)
       setError(null)
+
       // Fetch BPMN file data with scenarios
       const response = await fetch(`http://localhost:8080/api/bpmn/files/${fileId}`)
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`)
       }
+
       const bpmnData = await response.json()
       setData(bpmnData)
 
@@ -75,6 +78,7 @@ export default function ViewDetailPage() {
             (s) => s.path_id === scenarioId || s.path_id === `P${scenarioId}`,
           )
         }
+
         // Fallback to index or first scenario
         if (!selectedScenario) {
           selectedScenario = bpmnData.testScenariosJson[pathIndex] || bpmnData.testScenariosJson[0]
@@ -96,8 +100,10 @@ export default function ViewDetailPage() {
         if (viewerRef.current) {
           viewerRef.current.destroy()
         }
+
         const viewer = new BpmnViewer({ container: containerRef.current })
         viewerRef.current = viewer
+
         await viewer.importXML(bpmnData.bpmnXml)
         extractElementNames(viewer)
 
@@ -106,7 +112,7 @@ export default function ViewDetailPage() {
           highlightPath(selectedScenario.rawPath)
         }
 
-        // 🟢 Tambahkan listener event 'rendered' supaya styling diterapkan saat diagram sudah muncul
+        // Add listener event 'rendered' so styling is applied when diagram appears
         viewer.get("eventBus").on("rendered", () => {
           const canvasContainer = viewer.get("canvas").getContainer()
           const texts = canvasContainer.querySelectorAll(".djs-label text")
@@ -131,6 +137,7 @@ export default function ViewDetailPage() {
 
   const processInputDataGrouped = (inputData) => {
     const testDataArray = []
+
     Object.entries(inputData).forEach(([key, value]) => {
       const cleanKey = key
         .replace(/_/g, " ")
@@ -159,6 +166,7 @@ export default function ViewDetailPage() {
               value: String(item),
             }
           })
+
           testDataArray.push({
             id: key,
             label: cleanKey,
@@ -171,6 +179,7 @@ export default function ViewDetailPage() {
             key: subKey,
             value: String(subValue),
           }))
+
           testDataArray.push({
             id: key,
             label: cleanKey,
@@ -188,6 +197,7 @@ export default function ViewDetailPage() {
         })
       }
     })
+
     return testDataArray
   }
 
@@ -195,14 +205,17 @@ export default function ViewDetailPage() {
     const registry = viewer.get("elementRegistry")
     const elements = registry.getAll()
     const nameMap = {}
+
     elements.forEach((el) => {
       nameMap[el.id] = el.businessObject?.name || el.id
     })
+
     setElementNames(nameMap)
   }
 
   const highlightPath = (rawPath) => {
     if (!viewerRef.current || !rawPath) return
+
     const canvas = viewerRef.current.get("canvas")
     const elementRegistry = viewerRef.current.get("elementRegistry")
 
@@ -218,6 +231,7 @@ export default function ViewDetailPage() {
         canvas.addMarker(id, "highlight-path")
       }
     })
+
     canvas.zoom("fit-viewport")
   }
 
@@ -234,11 +248,12 @@ export default function ViewDetailPage() {
 
   const getActionSteps = (scenarioStep) => {
     if (!scenarioStep) return []
+
     const steps = scenarioStep
       .split("\n")
       .map((step) => step.trim())
       .filter(
-        (step) => step.match(/^\d+\.\s+/) || step.startsWith("->"), // support "1. " atau "-> "
+        (step) => step.match(/^\d+\.\s+/) || step.startsWith("->"), // support "1. " or "-> "
       )
       .map((step) =>
         step
@@ -247,6 +262,7 @@ export default function ViewDetailPage() {
           .trim(),
       )
       .filter((step) => step.length > 0)
+
     return steps
   }
 
@@ -277,37 +293,52 @@ export default function ViewDetailPage() {
 
   const handleDownloadExcel = async () => {
     try {
-      const response = await fetch(`/api/bpmn/download/${fileId}`, {
-        method: 'GET',
-      });
-      if (!response.ok) {
-        throw new Error('Gagal mengunduh file Excel.');
+      setShowDownloadDropdown(false)
+
+      // Create Excel data structure
+      const excelData = {
+        pathId: scenario?.path_id || "-",
+        description: scenario?.readable_description || "No description available",
+        actionSteps: getActionSteps(scenario?.scenario_step),
+        testData: testDataList,
+        expectedResult: getStatusDisplay(scenario),
+        fileName: data?.fileName || "BPMN File",
       }
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'scenarios_export.xlsx';
-      a.click();
-      window.URL.revokeObjectURL(url);
+
+      // Call the download Excel API endpoint
+      const response = await fetch(`http://localhost:8080/api/bpmn/download/excel/${fileId}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(excelData),
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to download Excel file")
+      }
+
+      // Handle the blob response
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = `scenario-${scenario?.path_id || "detail"}.xlsx`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      window.URL.revokeObjectURL(url)
+
+      console.log("Excel download completed successfully")
     } catch (error) {
-      alert(error.message);
+      console.error("Excel download failed:", error)
+      alert("Excel download failed. Please try again.")
     }
-  };
+  }
 
   const handleDownloadPDF = async () => {
     try {
       setShowDownloadDropdown(false)
-      // Call the download API endpoint
-      const response = await fetch(`http://localhost:8080/api/bpmn/download/${fileId}`, {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-        },
-      })
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
-      }
 
       // Format test data for PDF
       const formatTestDataForPDF = (testDataList) => {
@@ -344,7 +375,159 @@ export default function ViewDetailPage() {
       }
 
       // Create HTML content for PDF
-      const htmlContent = `<!DOCTYPE html><html lang="en"><head>    <meta charset="UTF-8">    <meta name="viewport" content="width=device-width, initial-scale=1.0">    <title>Test Scenario - ${scenario?.path_id || "Detail"}</title>    <style>        body {            font-family: Arial, sans-serif;            margin: 20px;            background-color: white;            font-size: 12px;        }        .container {            max-width: 100%;            margin: 0 auto;        }        h1 {            color: #2185D5;            text-align: center;            margin-bottom: 20px;            border-bottom: 3px solid #2185D5;            padding-bottom: 10px;            font-size: 24px;        }        table {            width: 100%;            border-collapse: collapse;            margin: 20px 0;            font-size: 10px;        }        th {            background-color: #2185D5;            color: white;            padding: 8px 6px;            text-align: left;            font-weight: bold;            border: 1px solid #ddd;            font-size: 10px;        }        td {            padding: 8px 6px;            border: 1px solid #ddd;            vertical-align: top;            line-height: 1.3;            font-size: 9px;        }        .path-id {            font-weight: bold;            color: #2185D5;            text-align: center;        }        .summary {            max-width: 150px;            word-wrap: break-word;        }        .actions {            max-width: 120px;        }        .test-data {            max-width: 180px;            font-size: 8px;        }        .expected-result {            max-width: 120px;            word-wrap: break-word;        }        .input-field {            width: 100%;            min-height: 30px;            border: 1px solid #ccc;            padding: 4px;            font-size: 9px;        }        ul {            margin: 3px 0;            padding-left: 12px;        }        li {            margin: 1px 0;        }        .header-info {            background-color: #f8f9fa;            padding: 10px;            border-radius: 5px;            margin-bottom: 15px;            border-left: 4px solid #2185D5;            font-size: 11px;        }        .instructions {            margin-top: 20px;            padding: 10px;            background-color: #e8f4fd;            border-radius: 5px;            font-size: 10px;        }        .instructions h3 {            color: #2185D5;            margin-top: 0;            font-size: 12px;        }        .instructions ul {            margin: 5px 0;        }    </style></head><body>    <div class="container">        <h1>Test Scenario Report</h1>                <div class="header-info">            <strong>File ID:</strong> ${fileId}<br>            <strong>Generated:</strong> ${new Date().toLocaleString()}<br>            <strong>Scenario Path:</strong> ${scenario?.path_id || "N/A"}        </div>                <table>            <thead>                <tr>                    <th style="width: 60px;">Path ID</th>                    <th style="width: 150px;">Summary Step</th>                    <th style="width: 120px;">Action Performed</th>                    <th style="width: 180px;">Data Uji</th>                    <th style="width: 120px;">Expected Result</th>                    <th style="width: 100px;">Actual Result</th>                    <th style="width: 80px;">Tester</th>                </tr>            </thead>            <tbody>                <tr>                    <td class="path-id">${scenario?.path_id || "-"}</td>                    <td class="summary">${scenario?.readable_description || "No description available"}</td>                    <td class="actions">${formatActionStepsForPDF(getActionSteps(scenario?.scenario_step))}</td>                    <td class="test-data">${formatTestDataForPDF(testDataList)}</td>                    <td class="expected-result">${getStatusDisplay(scenario) || "No expected result specified"}</td>                    <td><div class="input-field">_________________</div></td>                    <td><div class="input-field">_________</div></td>                </tr>            </tbody>        </table>                <div class="instructions">            <h3>Instructions:</h3>            <ul>                <li>Fill in the "Actual Result" field with the observed outcome</li>                <li>Enter the tester's name in the "Tester" field</li>                <li>Compare actual results with expected results to determine test status</li>                <li>Mark as PASS/FAIL based on comparison</li>            </ul>        </div>    </div></body></html>`
+      const htmlContent = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Scenario - ${scenario?.path_id || "Detail"}</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: white;
+            font-size: 12px;
+        }
+        .container {
+            max-width: 100%;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #2185D5;
+            text-align: center;
+            margin-bottom: 20px;
+            border-bottom: 3px solid #2185D5;
+            padding-bottom: 10px;
+            font-size: 24px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            font-size: 10px;
+        }
+        th {
+            background-color: #2185D5;
+            color: white;
+            padding: 8px 6px;
+            text-align: left;
+            font-weight: bold;
+            border: 1px solid #ddd;
+            font-size: 10px;
+        }
+        td {
+            padding: 8px 6px;
+            border: 1px solid #ddd;
+            vertical-align: top;
+            line-height: 1.3;
+            font-size: 9px;
+        }
+        .path-id {
+            font-weight: bold;
+            color: #2185D5;
+            text-align: center;
+        }
+        .summary {
+            max-width: 150px;
+            word-wrap: break-word;
+        }
+        .actions {
+            max-width: 120px;
+        }
+        .test-data {
+            max-width: 180px;
+            font-size: 8px;
+        }
+        .expected-result {
+            max-width: 120px;
+            word-wrap: break-word;
+        }
+        .input-field {
+            width: 100%;
+            min-height: 30px;
+            border: 1px solid #ccc;
+            padding: 4px;
+            font-size: 9px;
+        }
+        ul {
+            margin: 3px 0;
+            padding-left: 12px;
+        }
+        li {
+            margin: 1px 0;
+        }
+        .header-info {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            border-left: 4px solid #2185D5;
+            font-size: 11px;
+        }
+        .instructions {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #e8f4fd;
+            border-radius: 5px;
+            font-size: 10px;
+        }
+        .instructions h3 {
+            color: #2185D5;
+            margin-top: 0;
+            font-size: 12px;
+        }
+        .instructions ul {
+            margin: 5px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Test Scenario Report</h1>
+        
+        <div class="header-info">
+            <strong>File ID:</strong> ${fileId}<br>
+            <strong>Generated:</strong> ${new Date().toLocaleString()}<br>
+            <strong>Scenario Path:</strong> ${scenario?.path_id || "N/A"}
+        </div>
+        
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 60px;">Path ID</th>
+                    <th style="width: 150px;">Summary Step</th>
+                    <th style="width: 120px;">Action Performed</th>
+                    <th style="width: 180px;">Data Uji</th>
+                    <th style="width: 120px;">Expected Result</th>
+                    <th style="width: 100px;">Actual Result</th>
+                    <th style="width: 80px;">Tester</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td class="path-id">${scenario?.path_id || "-"}</td>
+                    <td class="summary">${scenario?.readable_description || "No description available"}</td>
+                    <td class="actions">${formatActionStepsForPDF(getActionSteps(scenario?.scenario_step))}</td>
+                    <td class="test-data">${formatTestDataForPDF(testDataList)}</td>
+                    <td class="expected-result">${getStatusDisplay(scenario) || "No expected result specified"}</td>
+                    <td><div class="input-field">_________________</div></td>
+                    <td><div class="input-field">_________</div></td>
+                </tr>
+            </tbody>
+        </table>
+        
+        <div class="instructions">
+            <h3>Instructions:</h3>
+            <ul>
+                <li>Fill in the "Actual Result" field with the observed outcome</li>
+                <li>Enter the tester's name in the "Tester" field</li>
+                <li>Compare actual results with expected results to determine test status</li>
+                <li>Mark as PASS/FAIL based on comparison</li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>`
 
       // Use html2pdf library
       const html2pdf = (await import("https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/+esm")).default
@@ -382,9 +565,9 @@ export default function ViewDetailPage() {
   }
 
   const handleSaveDescription = () => {
-    setScenario(prev => ({
+    setScenario((prev) => ({
       ...prev,
-      readable_description: tempDescription
+      readable_description: tempDescription,
     }))
     setEditingDescription(false)
     setSaveSuccess(false)
@@ -401,12 +584,12 @@ export default function ViewDetailPage() {
   }
 
   const handleSaveExpectedResult = () => {
-    setScenario(prev => ({
+    setScenario((prev) => ({
       ...prev,
       expected_result: {
         ...prev?.expected_result,
-        message: tempExpectedResult
-      }
+        message: tempExpectedResult,
+      },
     }))
     setEditingExpectedResult(false)
     setSaveSuccess(false)
@@ -425,13 +608,13 @@ export default function ViewDetailPage() {
 
   const handleSaveActionSteps = () => {
     const formattedSteps = tempActionSteps
-      .filter(step => step.trim() !== "")
+      .filter((step) => step.trim() !== "")
       .map((step, index) => `${index + 1}. ${step}`)
       .join("\n")
-    
-    setScenario(prev => ({
+
+    setScenario((prev) => ({
       ...prev,
-      scenario_step: formattedSteps
+      scenario_step: formattedSteps,
     }))
     setEditingActionSteps(false)
     setSaveSuccess(false)
@@ -474,11 +657,14 @@ export default function ViewDetailPage() {
     // If editing, save the data
     setSaving(true)
     setSaveSuccess(false)
+
     try {
       // Convert edited test data to API format
       const convertedData = convertTestDataToApiFormat(testDataList)
+
       // Determine pathId to use
       const pathId = scenario?.path_id || scenarioId || `P${pathIndex + 1}`
+
       console.log("Saving test data:", {
         fileId,
         pathId,
@@ -489,6 +675,7 @@ export default function ViewDetailPage() {
       const response = await bpmnApi.updateScenario(fileId, pathId, {
         input_data: convertedData,
       })
+
       console.log("Save response:", response.data)
 
       // Update original data in state to match what was saved
@@ -681,6 +868,7 @@ export default function ViewDetailPage() {
   const addSubField = (parentId, type = "primitive") => {
     const parentItem = testDataList.find((item) => item.id === parentId)
     if (!parentItem) return
+
     const newItem = {
       id: `${parentId}_sub_${Date.now()}`,
       label: "New Sub Field",
@@ -689,6 +877,7 @@ export default function ViewDetailPage() {
       parentId: parentId,
       level: (parentItem.level || 0) + 1,
     }
+
     setTestDataList([...testDataList, newItem])
     setSaveSuccess(false)
   }
@@ -763,6 +952,7 @@ export default function ViewDetailPage() {
 
   const renderEditTestDataItem = (item, index) => {
     const indentLevel = (item.level || 0) * 20 // 20px per level
+
     if (item.type === "array") {
       return (
         <div
@@ -802,8 +992,8 @@ export default function ViewDetailPage() {
                   >
                     + Array
                   </button>
-                  <button 
-                    onClick={() => removeTestDataItem(item.id)} 
+                  <button
+                    onClick={() => removeTestDataItem(item.id)}
                     className="text-red-500 hover:text-red-700 p-1 rounded-md hover:bg-red-100 transition-colors"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -920,8 +1110,8 @@ export default function ViewDetailPage() {
                   >
                     + Array
                   </button>
-                  <button 
-                    onClick={() => removeTestDataItem(item.id)} 
+                  <button
+                    onClick={() => removeTestDataItem(item.id)}
                     className="text-red-500 hover:text-red-700 p-1 rounded-md hover:bg-red-100 transition-colors"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -1015,8 +1205,8 @@ export default function ViewDetailPage() {
               >
                 + Arr
               </button>
-              <button 
-                onClick={() => removeTestDataItem(item.id)} 
+              <button
+                onClick={() => removeTestDataItem(item.id)}
                 className="text-red-500 hover:text-red-700 p-1 rounded-md hover:bg-red-100 transition-colors"
               >
                 <Trash2 className="w-4 h-4" />
@@ -1030,9 +1220,11 @@ export default function ViewDetailPage() {
 
   const convertTestDataToApiFormat = (testDataList) => {
     const apiData = {}
+
     testDataList.forEach((item) => {
       // Convert the clean label back to API key format
       const apiKey = item.id.startsWith("new_") ? item.label.toLowerCase().replace(/\s+/g, "_") : item.id
+
       if (item.type === "primitive") {
         // Simple key-value pair
         apiData[apiKey] = item.value
@@ -1061,6 +1253,7 @@ export default function ViewDetailPage() {
         apiData[apiKey] = arrayData
       }
     })
+
     return apiData
   }
 
@@ -1081,7 +1274,9 @@ export default function ViewDetailPage() {
         <div className="text-center">
           <p className="text-red-600 mb-4">{error}</p>
           <Link to="/scenario" state={{ fileId }}>
-            <Button className="bg-[#2185D5] hover:bg-[#1D5D9B] text-white rounded-lg px-4 py-2 transition-colors">Go Back to Scenarios</Button>
+            <Button className="bg-[#2185D5] hover:bg-[#1D5D9B] text-white rounded-lg px-4 py-2 transition-colors">
+              Go Back to Scenarios
+            </Button>
           </Link>
         </div>
       </div>
@@ -1111,6 +1306,7 @@ export default function ViewDetailPage() {
                   <div className="text-xs text-gray-500">BPMN GENERATOR</div>
                 </div>
               </div>
+
               <nav className="flex space-x-8">
                 <Link
                   to="/"
@@ -1361,9 +1557,11 @@ export default function ViewDetailPage() {
                       </Button>
                     </div>
                   </div>
+
                   <div className="space-y-3">
                     {testDataList.map((item, index) => renderEditTestDataItem(item, index))}
                   </div>
+
                   <div className="flex justify-between items-center pt-4 border-t border-gray-200">
                     <Button
                       onClick={handleCancelEdit}
@@ -1449,6 +1647,7 @@ export default function ViewDetailPage() {
                 <span>Download</span>
                 <ChevronDown className="w-4 h-4" />
               </Button>
+
               {/* Dropdown Menu */}
               {showDownloadDropdown && (
                 <div className="absolute left-0 mt-2 w-48 bg-white border border-gray-200 rounded-xl shadow-lg z-50">
@@ -1516,7 +1715,8 @@ export default function ViewDetailPage() {
       {showDownloadDropdown && <div className="fixed inset-0 z-40" onClick={() => setShowDownloadDropdown(false)} />}
 
       {/* Enhanced CSS for BPMN highlighting */}
-      <style>{`/* Enhanced CSS for BPMN highlighting - ONLY highlight elements in the selected path */
+      <style>{`
+        /* Enhanced CSS for BPMN highlighting - ONLY highlight elements in the selected path */
 /* Start Events - Light Teal - ONLY when highlighted */
 .djs-element.highlight-path[data-element-id*="StartEvent"] .djs-visual > circle,
 .djs-element.highlight-path[data-element-id*="Event_"] .djs-visual > circle {
@@ -1573,6 +1773,7 @@ export default function ViewDetailPage() {
   stroke-width: 2 !important;
 }
 
+/* Fix for text labels - prevent bold and ensure normal rendering */
 .djs-label text {
   stroke: none !important;
   paint-order: normal !important;
@@ -1580,7 +1781,30 @@ export default function ViewDetailPage() {
   fill: black !important;
   vector-effect: non-scaling-stroke !important;
   shape-rendering: geometricPrecision !important;
-}`}</style>
+  font-family: Arial, sans-serif !important;
+}
+
+/* Specifically target highlighted element text to prevent bold */
+.djs-element.highlight-path .djs-label text {
+  stroke: none !important;
+  paint-order: normal !important;
+  font-weight: normal !important;
+  fill: black !important;
+  vector-effect: non-scaling-stroke !important;
+  shape-rendering: geometricPrecision !important;
+  font-family: Arial, sans-serif !important;
+  font-style: normal !important;
+}
+
+/* Additional fix for any text elements within highlighted paths */
+.highlight-path text,
+.djs-element.highlight-path text {
+  font-weight: normal !important;
+  font-style: normal !important;
+  stroke: none !important;
+  fill: black !important;
+}
+      `}</style>
     </div>
   )
 }

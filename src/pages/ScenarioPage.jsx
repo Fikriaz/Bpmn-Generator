@@ -28,13 +28,10 @@ export default function ScenarioPage() {
       try {
         setLoading(true)
         setError(null)
-
         const res = await fetch(`http://localhost:8080/api/bpmn/files/${fileId}`)
-
         if (!res.ok) {
           throw new Error(`HTTP error! status: ${res.status}`)
         }
-
         const json = await res.json()
         setData(json)
 
@@ -45,6 +42,11 @@ export default function ScenarioPage() {
 
           await viewer.importXML(json.bpmnXml)
           extractElementNames(viewer)
+
+          // Add event listener to fix text styling after rendering
+          viewer.get("eventBus").on("rendered", () => {
+            fixTextStyling()
+          })
 
           // Highlight the first path by default
           if (json.testScenariosJson?.length > 0) {
@@ -75,6 +77,30 @@ export default function ScenarioPage() {
       highlightPath(rawPath)
     }
   }, [currentPathIndex, data])
+
+  const fixTextStyling = () => {
+    if (!viewerRef.current) return
+
+    const canvasContainer = viewerRef.current.get("canvas").getContainer()
+    const texts = canvasContainer.querySelectorAll(".djs-label text")
+
+    texts.forEach((textElement) => {
+      // Remove any stroke attributes that cause bold appearance
+      textElement.removeAttribute("stroke")
+      textElement.removeAttribute("stroke-width")
+
+      // Set explicit styles to prevent bold text
+      textElement.style.stroke = "none"
+      textElement.style.strokeWidth = "0"
+      textElement.style.paintOrder = "normal"
+      textElement.style.fontWeight = "normal"
+      textElement.style.fill = "black"
+      textElement.style.vectorEffect = "non-scaling-stroke"
+      textElement.style.shapeRendering = "geometricPrecision"
+      textElement.style.fontFamily = "Arial, sans-serif"
+      textElement.style.fontSize = "12px"
+    })
+  }
 
   const extractElementNames = (viewer) => {
     const registry = viewer.get("elementRegistry")
@@ -109,16 +135,23 @@ export default function ScenarioPage() {
     })
 
     canvas.zoom("fit-viewport")
+
+    // Fix text styling after highlighting
+    setTimeout(() => {
+      fixTextStyling()
+    }, 100)
   }
 
   const handlePrev = () => {
     if (!data?.testScenariosJson?.length) return
+
     const newIndex = currentPathIndex === 0 ? data.testScenariosJson.length - 1 : currentPathIndex - 1
     setCurrentPathIndex(newIndex)
   }
 
   const handleNext = () => {
     if (!data?.testScenariosJson?.length) return
+
     const newIndex = currentPathIndex === data.testScenariosJson.length - 1 ? 0 : currentPathIndex + 1
     setCurrentPathIndex(newIndex)
   }
@@ -135,16 +168,17 @@ export default function ScenarioPage() {
   }
 
   const getStatusDisplay = (scenario) => {
-  const pathStr = scenario?.scenario_path?.trim();
-  if (pathStr) {
-    const steps = pathStr.split("->").map((s) => s.trim()).filter(Boolean);
-    const lastStep = steps.length > 0 ? steps[steps.length - 1] : "-";
-    return { text: lastStep, color: "text-gray-600" };
+    const pathStr = scenario?.scenario_path?.trim()
+    if (pathStr) {
+      const steps = pathStr
+        .split("->")
+        .map((s) => s.trim())
+        .filter(Boolean)
+      const lastStep = steps.length > 0 ? steps[steps.length - 1] : "-"
+      return { text: lastStep, color: "text-gray-600" }
+    }
+    return { text: "-", color: "text-gray-600" }
   }
-
-  return { text: "-", color: "text-gray-600" };
-};
-
 
   const resetHighlight = () => {
     if (!viewerRef.current) return
@@ -157,6 +191,11 @@ export default function ScenarioPage() {
       canvas.removeMarker(el.id, "highlight-path")
       canvas.removeMarker(el.id, "highlight-element")
     })
+
+    // Fix text styling after reset
+    setTimeout(() => {
+      fixTextStyling()
+    }, 100)
   }
 
   const handleDownloadScenario = () => {
@@ -164,7 +203,6 @@ export default function ScenarioPage() {
 
     const dataStr = JSON.stringify(data.testScenariosJson, null, 2)
     const dataUri = "data:application/json;charset=utf-8," + encodeURIComponent(dataStr)
-
     const exportFileDefaultName = `scenarios_${fileId}.json`
 
     const linkElement = document.createElement("a")
@@ -183,7 +221,6 @@ export default function ScenarioPage() {
 
     const dataStr = JSON.stringify(pathData, null, 2)
     const dataUri = "data:application/json;charset=utf-8," + encodeURIComponent(dataStr)
-
     const exportFileDefaultName = `path_${pathData.path_id}.json`
 
     const linkElement = document.createElement("a")
@@ -239,6 +276,7 @@ export default function ScenarioPage() {
                   <div className="text-xs text-gray-500">BPMN GENERATOR</div>
                 </div>
               </div>
+
               <nav className="flex space-x-8">
                 <Link
                   to="/"
@@ -357,15 +395,11 @@ export default function ScenarioPage() {
                       onClick={() => handleRowClick(index)}
                     >
                       <TableCell className="font-medium ">{scenario.path_id || `P${index + 1}`}</TableCell>
-           <TableCell className="align-top max-w-md p-2">
-  <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">
-    {scenario.summary && scenario.summary.trim() !== "" 
-      ? scenario.summary 
-      : "-"}
-  </div>
-</TableCell>
-
-
+                      <TableCell className="align-top max-w-md p-2">
+                        <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">
+                          {scenario.summary && scenario.summary.trim() !== "" ? scenario.summary : "-"}
+                        </div>
+                      </TableCell>
                       <TableCell>
                         <span className={`font-medium ${status.color}`}>{status.text}</span>
                       </TableCell>
@@ -420,70 +454,97 @@ export default function ScenarioPage() {
         </div>
       </main>
 
-      {/* Enhanced CSS for better highlighting */}
+      {/* Enhanced CSS for better highlighting - FIXED TEXT BOLD ISSUE */}
       <style>{`
-  /* Start Events - Light Teal - ONLY when highlighted */
-  .djs-element.highlight-path[data-element-id*="StartEvent"] .djs-visual > circle,
-  .djs-element.highlight-path[data-element-id*="Event_"] .djs-visual > circle {
-    fill: #98E9DD !important;
-    stroke: #000000 !important;
-    stroke-width: 2 !important;
-  }
-  
-  /* End Events - Light Teal - ONLY when highlighted */
-  .djs-element.highlight-path[data-element-id*="EndEvent"] .djs-visual > circle {
-    fill: #98E9DD !important;
-    stroke: #000000 !important;
-    stroke-width: 2 !important;
-  }
-  
-  /* General Tasks - Light Yellow Background - ONLY when highlighted */
-  .djs-element.highlight-path[data-element-id*="Task"] .djs-visual > rect,
-  .djs-element.highlight-path[data-element-id*="Activity_"] .djs-visual > rect {
-    fill: #FFFFBD !important;
-    stroke: #000000 !important;
-    stroke-width: 2 !important;
-  }
-  
-  /* Message Task / Receive Task - Light Green - ONLY when highlighted */
-  .djs-element.highlight-path[data-element-id*="MessageTask"] .djs-visual > rect,
-  .djs-element.highlight-path[data-element-id*="ReceiveTask"] .djs-visual > rect {
-    fill: #96DF67 !important;
-    stroke: #000000 !important;
-    stroke-width: 2 !important;
-  }
-  
-  /* Path highlighting - enhanced for better visibility */
-  .highlight-path {
-    stroke: #000000 !important;
-    stroke-width: 3 !important;
-  }
-  
-  /* BPMN specific styling for highlighted paths */
-  .djs-element.highlight-path .djs-visual > :nth-child(1) {
-    stroke: #000000 !important;
-    stroke-width: 3 !important;
-  }
-  
-  /* Sequence flows (arrows) - ONLY when highlighted */
-  .djs-element.highlight-path .djs-visual > path {
-    stroke: #000000 !important;
-    stroke-width: 2 !important;
-  }
-  
-  /* Gateways - ONLY when highlighted */
-  .djs-element.highlight-path .djs-visual > polygon {
-    fill: #E0E0E0 !important;
-    stroke: #000000 !important;
-    stroke-width: 2 !important;
-  }
-  
-  /* Table row selection styling */
-  .table-row-selected {
-    background-color: #eff6ff !important;
-    border-left: 4px solid #3b82f6 !important;
-  }
-`}</style>
+        /* CRITICAL FIX: Prevent bold text on ALL BPMN labels */
+        .djs-label text,
+        .djs-element .djs-label text,
+        .djs-element.highlight-path .djs-label text,
+        .highlight-path .djs-label text {
+          stroke: none !important;
+          stroke-width: 0 !important;
+          paint-order: normal !important;
+          font-weight: normal !important;
+          fill: black !important;
+          vector-effect: non-scaling-stroke !important;
+          shape-rendering: geometricPrecision !important;
+          font-family: Arial, sans-serif !important;
+          font-size: 12px !important;
+          font-style: normal !important;
+        }
+
+        /* Additional text fix for any nested text elements */
+        .djs-visual text,
+        .djs-element .djs-visual text,
+        .djs-element.highlight-path .djs-visual text {
+          stroke: none !important;
+          stroke-width: 0 !important;
+          font-weight: normal !important;
+          fill: black !important;
+        }
+
+        /* Start Events - Light Teal - ONLY when highlighted */
+        .djs-element.highlight-path[data-element-id*="StartEvent"] .djs-visual > circle,
+        .djs-element.highlight-path[data-element-id*="Event_"] .djs-visual > circle {
+          fill: #98E9DD !important;
+          stroke: #000000 !important;
+          stroke-width: 2 !important;
+        }
+
+        /* End Events - Light Teal - ONLY when highlighted */
+        .djs-element.highlight-path[data-element-id*="EndEvent"] .djs-visual > circle {
+          fill: #98E9DD !important;
+          stroke: #000000 !important;
+          stroke-width: 2 !important;
+        }
+
+        /* General Tasks - Light Yellow Background - ONLY when highlighted */
+        .djs-element.highlight-path[data-element-id*="Task"] .djs-visual > rect,
+        .djs-element.highlight-path[data-element-id*="Activity_"] .djs-visual > rect {
+          fill: #FFFFBD !important;
+          stroke: #000000 !important;
+          stroke-width: 2 !important;
+        }
+
+        /* Message Task / Receive Task - Light Green - ONLY when highlighted */
+        .djs-element.highlight-path[data-element-id*="MessageTask"] .djs-visual > rect,
+        .djs-element.highlight-path[data-element-id*="ReceiveTask"] .djs-visual > rect {
+          fill: #96DF67 !important;
+          stroke: #000000 !important;
+          stroke-width: 2 !important;
+        }
+
+        /* Path highlighting - enhanced for better visibility */
+        .highlight-path {
+          stroke: #000000 !important;
+          stroke-width: 3 !important;
+        }
+
+        /* BPMN specific styling for highlighted paths */
+        .djs-element.highlight-path .djs-visual > :nth-child(1) {
+          stroke: #000000 !important;
+          stroke-width: 3 !important;
+        }
+
+        /* Sequence flows (arrows) - ONLY when highlighted */
+        .djs-element.highlight-path .djs-visual > path {
+          stroke: #000000 !important;
+          stroke-width: 2 !important;
+        }
+
+        /* Gateways - ONLY when highlighted */
+        .djs-element.highlight-path .djs-visual > polygon {
+          fill: #E0E0E0 !important;
+          stroke: #000000 !important;
+          stroke-width: 2 !important;
+        }
+
+        /* Table row selection styling */
+        .table-row-selected {
+          background-color: #eff6ff !important;
+          border-left: 4px solid #3b82f6 !important;
+        }
+      `}</style>
     </div>
   )
 }
