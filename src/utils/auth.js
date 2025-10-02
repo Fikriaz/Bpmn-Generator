@@ -1,5 +1,10 @@
 // src/utils/auth.js
-export const API_BASE = "http://localhost:8080";
+
+//lokaL
+// export const API_BASE = "http://localhost:8080";
+
+//deploy
+export const API_BASE = "https://automation-test.up.railway.app";
 
 const TOKEN_KEY = "authToken";
 const USER_KEY = "user";

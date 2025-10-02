@@ -14,6 +14,7 @@ import {
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import Button from "../components/ui/Button";
 import UserMenu from "../components/ui/UserMenu";
+import DownloadPopup from "../components/DownloadPopup";
 import {
   Table,
   TableBody,
@@ -39,6 +40,12 @@ export default function ScenarioPage() {
   const [elementNames, setElementNames] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [downloading, setDownloading] = useState(false);
+  
+  // Download popup states
+  const [showDownloadPopup, setShowDownloadPopup] = useState(false);
+  const [downloadMode, setDownloadMode] = useState('single'); // 'single' or 'all'
+  const [selectedScenarioForDownload, setSelectedScenarioForDownload] = useState(null);
 
   const fileId =
     location.state?.fileId || new URLSearchParams(location.search).get("fileId");
@@ -115,7 +122,6 @@ export default function ScenarioPage() {
       const actualIds = convertToActualIds(scenarios[currentPathIndex]?.rawPath || []);
       highlightPath(actualIds);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPathIndex, scenarios.length]);
 
   /* ===== Helpers ===== */
@@ -125,7 +131,6 @@ export default function ScenarioPage() {
     const elements = registry.getAll();
     const mapping = {};
 
-    // Mapping dari backend (elementsJson)
     if (data.elementsJson && Array.isArray(data.elementsJson)) {
       data.elementsJson.forEach((elem) => {
         if (elem?.id) {
@@ -134,19 +139,17 @@ export default function ScenarioPage() {
           }
           if (elem.name) {
             mapping[elem.name] = elem.id;
-            mapping[`[System] ${elem.name}`] = elem.id; // fallback
+            mapping[`[System] ${elem.name}`] = elem.id;
           }
         }
       });
     }
 
-    // Fallback mapping dari diagram
     elements.forEach((el) => {
       const bo = el.businessObject;
       if (bo && bo.name) {
         mapping[bo.name] = el.id;
 
-        // Markas System di dalam SubProcess (opsional)
         if (el.parent && el.parent.type === "bpmn:SubProcess") {
           mapping[`[System] ${bo.name}`] = el.id;
         }
@@ -165,12 +168,10 @@ export default function ScenarioPage() {
     const lanes = allElements.filter((el) => el.type === "bpmn:Lane");
     for (const lane of lanes) {
       const flowNodes = lane?.businessObject?.flowNodeRef || [];
-      // flowNodeRef berisi BO nodes, bukan string id → bandingkan dengan businessObject
       const isInLane = flowNodes.some((n) => n && element.businessObject && n.id === element.businessObject.id);
       if (isInLane) return lane.businessObject?.name || lane.id;
     }
     return null;
-    // Catatan: ini pendekatan sederhana; kalau pakai LaneSet / Participant kompleks, backend mapping sudah bantu.
   };
 
   const convertToActualIds = (displayNames) => {
@@ -191,7 +192,7 @@ export default function ScenarioPage() {
 
         if (!actualId) {
           console.warn(`No mapping found for display name: ${displayName}`);
-          return displayName; // fallback id = displayName (biar ga blank)
+          return displayName;
         }
         return actualId;
       })
@@ -348,59 +349,212 @@ export default function ScenarioPage() {
     highlightPath(actualIds);
   };
 
+  // UPDATED: Get readable path (remove lane prefix)
   const getReadableScenarioPath = (pathArray) => {
     if (!Array.isArray(pathArray)) return "-";
-    return pathArray.map((displayName) => displayName.replace(/^\[.*?\]\s*/, "")).join(" → ");
+    return pathArray
+      .map((displayName) => displayName.replace(/^\[.*?\]\s*/, ""))
+      .join(" → ");
   };
 
-  const getStatusDisplay = (scenario) => {
-    if (scenario?.rawPath && scenario.rawPath.length > 0) {
-      const lastRawPath = scenario.rawPath[scenario.rawPath.length - 1];
-      const cleanText = String(lastRawPath).replace(/^\[.*?\]\s*/, "").trim();
-      return { text: cleanText, color: "text-green-600", bgColor: "bg-green-100" };
+  // UPDATED: Get status from expected_result only
+ // FIXED: Get status from expected_result.message
+const getStatusDisplay = (scenario) => {
+  // Handle expected_result as object with message property
+  let expectedResult = "";
+  
+  if (scenario?.expected_result) {
+    if (typeof scenario.expected_result === 'object' && scenario.expected_result.message) {
+      expectedResult = scenario.expected_result.message.trim();
+    } else if (typeof scenario.expected_result === 'string') {
+      expectedResult = scenario.expected_result.trim();
     }
-    const pathStr = scenario?.scenario_path?.trim();
-    if (pathStr) {
-      const steps = pathStr.split("->").map((s) => s.trim()).filter(Boolean);
-      if (steps.length > 0) {
-        const lastStep = steps[steps.length - 1].replace(/^\[.*?\]\s*/, "").trim();
-        return { text: lastStep, color: "text-green-600", bgColor: "bg-green-100" };
-      }
-    }
-    return { text: "Ready", color: "text-blue-600", bgColor: "bg-blue-100" };
+  }
+  
+  if (expectedResult && expectedResult !== "") {
+    return { 
+      text: expectedResult, 
+      color: "text-green-600", 
+      bgColor: "bg-green-100" 
+    };
+  }
+  
+  return { 
+    text: "No expected result", 
+    color: "text-gray-600", 
+    bgColor: "bg-gray-100" 
   };
+};
 
   const resetHighlight = () => {
     clearHighlights();
     setTimeout(fixTextStyling, 50);
   };
 
-  const handleDownloadScenario = () => {
-    const list = scenarios;
-    if (!list.length) return;
-    const dataStr = JSON.stringify(list, null, 2);
-    const dataUri = "data:application/json;charset=utf-8," + encodeURIComponent(dataStr);
-    const exportFileDefaultName = `scenarios_${fileId}.json`;
-    const a = document.createElement("a");
-    a.setAttribute("href", dataUri);
-    a.setAttribute("download", exportFileDefaultName);
-    a.click();
+  // Helper to get action steps from scenario
+  const getActionSteps = (scenarioStep) => {
+    if (!scenarioStep) return [];
+    const steps = scenarioStep
+      .split("\n")
+      .map((step) => step.trim())
+      .filter((step) => step.match(/^\d+\.\s+/) || step.startsWith("->"))
+      .map((step) => step.replace(/^\d+\.\s*/, "").replace(/^->\s*/, "").trim())
+      .filter((step) => step.length > 0);
+    return steps;
   };
 
+  // UPDATED: Download All Scenarios
+  const handleDownloadAllScenarios = () => {
+    setDownloadMode('all');
+    setSelectedScenarioForDownload(null);
+    setShowDownloadPopup(true);
+  };
+
+  // UPDATED: Download Single Scenario
   const handleDownloadPath = (scenario, index) => {
-    const pathData = {
-      path_id: scenario.path_id || `P${index + 1}`,
-      rawPath: scenario.rawPath,
-      readable_description: scenario.readable_description,
-      expected_result: scenario.expected_result
-    };
-    const dataStr = JSON.stringify(pathData, null, 2);
-    const dataUri = "data:application/json;charset=utf-8," + encodeURIComponent(dataStr);
-    const exportFileDefaultName = `path_${pathData.path_id}.json`;
-    const a = document.createElement("a");
-    a.setAttribute("href", dataUri);
-    a.setAttribute("download", exportFileDefaultName);
-    a.click();
+    setDownloadMode('single');
+    setSelectedScenarioForDownload(scenario);
+    setShowDownloadPopup(true);
+  };
+
+  // UPDATED: Handle download with DownloadPopup
+  const handleDownload = async (downloadOptions) => {
+    const { format, includeTesterName, testerName } = downloadOptions;
+    
+    try {
+      setDownloading(true);
+
+      if (downloadMode === 'all') {
+        // Download all scenarios
+        const downloadData = {
+          format,
+          includeTester: includeTesterName,
+          testerName: includeTesterName ? testerName : ""
+        };
+
+        const res = await authFetch(
+          `${API_BASE}/api/bpmn/files/${fileId}/download-all`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(downloadData)
+          },
+          { onUnauthorizedRedirectTo: "/login" }
+        );
+
+        if (!res.ok) {
+          throw new Error("Failed to download");
+        }
+
+        const contentDisposition = res.headers.get("Content-Disposition");
+        let filename = `all-test-scenarios.${format === "pdf" ? "pdf" : "xlsx"}`;
+        if (contentDisposition) {
+          const filenameMatch = contentDisposition.match(/filename="?(.+)"?/);
+          if (filenameMatch) filename = filenameMatch[1];
+        }
+
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+
+      } else {
+        // Download single scenario
+        const scenario = selectedScenarioForDownload;
+        
+        // Process test data
+        const processedTestData = [];
+        if (scenario.input_data && typeof scenario.input_data === 'object') {
+          Object.entries(scenario.input_data).forEach(([key, value]) => {
+            const cleanKey = key
+              .replace(/_/g, " ")
+              .replace(/([A-Z])/g, " $1")
+              .trim()
+              .toLowerCase()
+              .replace(/\b\w/g, (l) => l.toUpperCase());
+
+            if (typeof value === "object" && value !== null) {
+              if (Array.isArray(value)) {
+                const arrayItems = value.map((item, index) => {
+                  if (typeof item === "object") {
+                    return {
+                      id: `${key}_${index}`,
+                      index,
+                      properties: Object.entries(item).map(([subKey, subValue]) => ({
+                        key: subKey,
+                        value: String(subValue),
+                      })),
+                    };
+                  }
+                  return { id: `${key}_${index}`, index, value: String(item) };
+                });
+                processedTestData.push({ id: key, label: cleanKey, value: arrayItems, type: "array" });
+              } else {
+                const objectItems = Object.entries(value).map(([subKey, subValue]) => ({
+                  key: subKey,
+                  value: String(subValue),
+                }));
+                processedTestData.push({ id: key, label: cleanKey, value: objectItems, type: "object" });
+              }
+            } else {
+              processedTestData.push({ id: key, label: cleanKey, value: String(value), type: "primitive" });
+            }
+          });
+        }
+
+        const downloadData = {
+          format,
+          pathId: scenario?.path_id || "-",
+          description: scenario?.readable_description || scenario?.summary || "No description available",
+          actionSteps: getActionSteps(scenario?.scenario_step),
+          testData: processedTestData,
+          expectedResult: scenario?.expected_result || "No expected result",
+          fileName: data?.originalFileName || data?.fileName || "BPMN File",
+          includeTester: includeTesterName,
+          testerName: includeTesterName ? testerName : null,
+        };
+
+        const response = await authFetch(
+          `${API_BASE}/api/bpmn/files/download/${fileId}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(downloadData),
+          },
+          { onUnauthorizedRedirectTo: "/login" }
+        );
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`Server error: ${response.status} - ${errorText}`);
+        }
+
+        const blob = await response.blob();
+        if (blob.size === 0) throw new Error("Received empty file from server");
+
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `test-scenario-${scenario?.path_id || "detail"}.${format === "pdf" ? "pdf" : "xlsx"}`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+      }
+
+      setShowDownloadPopup(false);
+
+    } catch (err) {
+      console.error("Download error:", err);
+      alert("Gagal download. Silakan coba lagi.");
+    } finally {
+      setDownloading(false);
+    }
   };
 
   /* ===== UI ===== */
@@ -515,8 +669,10 @@ export default function ScenarioPage() {
                       {scenarios[currentPathIndex]?.path_id || `P${currentPathIndex + 1}`}
                     </div>
                     <div className="text-sm text-gray-600 break-words">
-                      {getReadableScenarioPath(scenarios[currentPathIndex]?.rawPath)}
-                    </div>
+  {scenarios[currentPathIndex]?.rawPath 
+    ? getReadableScenarioPath(scenarios[currentPathIndex].rawPath)
+    : "-"}
+</div>
                   </div>
                 </div>
 
@@ -542,11 +698,21 @@ export default function ScenarioPage() {
             <span>Reset Highlight</span>
           </Button>
           <Button
-            className="flex items-center justify-center space-x-2 bg-[#2185D5] hover:bg-[#1D5D9B] text-white transition-all duration-200 py-3 px-6 rounded-lg font-medium shadow-md hover:shadow-lg"
-            onClick={handleDownloadScenario}
+            className="flex items-center justify-center space-x-2 bg-[#2185D5] hover:bg-[#1D5D9B] text-white transition-all duration-200 py-3 px-6 rounded-lg font-medium shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={handleDownloadAllScenarios}
+            disabled={downloading || !scenarios.length}
           >
-            <Download className="w-5 h-5" />
-            <span>Download All Scenarios</span>
+            {downloading ? (
+              <>
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                <span>Downloading...</span>
+              </>
+            ) : (
+              <>
+                <Download className="w-5 h-5" />
+                <span>Download All Scenarios</span>
+              </>
+            )}
           </Button>
         </div>
 
@@ -591,7 +757,10 @@ export default function ScenarioPage() {
                         <TableCell className="py-4 max-w-md">
                           <div className="space-y-2">
                             <div className="text-sm text-gray-900 font-medium line-clamp-2">
-                              {scenario.summary && scenario.summary.trim() !== "" ? scenario.summary : "No summary available"}
+                              {scenario.readable_description || 
+                               scenario.summary || 
+                               getReadableScenarioPath(scenario.rawPath) ||
+                               "No description available"}
                             </div>
                             <div className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded inline-block">
                               {scenario.rawPath?.length || 0} steps
@@ -656,7 +825,15 @@ export default function ScenarioPage() {
         </div>
       </main>
 
-      {/* Flexible, type-based highlighting CSS */}
+      {/* Download Popup */}
+      <DownloadPopup
+        isOpen={showDownloadPopup}
+        onClose={() => setShowDownloadPopup(false)}
+        onDownload={handleDownload}
+        scenario={downloadMode === 'single' ? selectedScenarioForDownload : null}
+        fileId={fileId}
+      />
+
       <style>{`
         .djs-label text, .djs-visual text {
           stroke: none !important;
