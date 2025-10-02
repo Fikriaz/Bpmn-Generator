@@ -1,27 +1,25 @@
-export function Table({ className = "", ...props }) {
-  return (
-    <div className="w-full overflow-auto">
-      <table className={`w-full caption-bottom text-sm ${className}`} {...props} />
-    </div>
-  )
-}
+export const Table = ({ children, className = "" }) => (
+  <div className="overflow-x-auto">
+    <table className={`min-w-full divide-y divide-gray-200 ${className}`}>{children}</table>
+  </div>
+)
 
-export function TableHeader({ className = "", ...props }) {
-  return <thead className={`[&_tr]:border-b ${className}`} {...props} />
-}
+export const TableHeader = ({ children, className = "" }) => (
+  <thead className={`bg-gray-50 ${className}`}>{children}</thead>
+)
 
-export function TableBody({ className = "", ...props }) {
-  return <tbody className={`[&_tr:last-child]:border-0 ${className}`} {...props} />
-}
+export const TableBody = ({ children, className = "" }) => (
+  <tbody className={`bg-white divide-y divide-gray-200 ${className}`}>{children}</tbody>
+)
 
-export function TableRow({ className = "", ...props }) {
-  return <tr className={`border-b transition-colors hover:bg-gray-50 ${className}`} {...props} />
-}
+export const TableRow = ({ children, className = "" }) => <tr className={className}>{children}</tr>
 
-export function TableHead({ className = "", ...props }) {
-  return <th className={`h-12 px-4 text-left align-middle font-medium text-gray-500 ${className}`} {...props} />
-}
+export const TableHead = ({ children, className = "" }) => (
+  <th className={`px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider ${className}`}>
+    {children}
+  </th>
+)
 
-export function TableCell({ className = "", ...props }) {
-  return <td className={`p-4 align-middle ${className}`} {...props} />
-}
+export const TableCell = ({ children, className = "" }) => (
+  <td className={`px-6 py-4 whitespace-nowrap text-sm text-gray-900 ${className}`}>{children}</td>
+)
