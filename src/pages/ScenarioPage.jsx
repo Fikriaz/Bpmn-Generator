@@ -1,7 +1,7 @@
 "use client";
-import { buildElementMapping, convertToActualIds, highlightPath } from "../utils/bpmnHighlight";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   ChevronLeft,
   ChevronRight,
@@ -12,7 +12,7 @@ import {
   MapPin,
   AlertCircle
 } from "lucide-react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+
 import Button from "../components/ui/Button";
 import UserMenu from "../components/ui/UserMenu";
 import DownloadPopup from "../components/DownloadPopup";
@@ -26,30 +26,56 @@ import {
 } from "../components/ui/Table";
 import { API_BASE, authFetch } from "../utils/auth";
 
-// CSS bawaan bpmn-js WAJIB di-load di halaman yang render viewer
+// utils (mapping + highlight)
+import {
+  buildElementMapping,
+  convertToActualIds,
+  highlightPath
+} from "../utils/bpmnHighlight";
+
+// CSS wajib bpmn-js
 import "bpmn-js/dist/assets/diagram-js.css";
 import "bpmn-js/dist/assets/bpmn-font/css/bpmn.css";
 import "bpmn-js/dist/assets/bpmn-font/css/bpmn-codes.css";
 import "bpmn-js/dist/assets/bpmn-font/css/bpmn-embedded.css";
 
+// dynamic viewer (hindari top-level await)
+let BpmnViewerLocal = null;
 
-
-// zoom
-viewerRef.current.get("canvas").zoom("fit-viewport");
 export default function ScenarioPage() {
-  /* ===== Refs & State Utama ===== */
+  /* ----- Refs & State ----- */
   const viewerRef = useRef(null);
-
-  // callback ref: supaya kita tahu kapan container DOM sudah ada
   const containerRef = useRef(null);
+
   const [containerReady, setContainerReady] = useState(false);
+  const [containerSized, setContainerSized] = useState(false);
+  const [bpmnReady, setBpmnReady] = useState(false);
+
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const [currentPathIndex, setCurrentPathIndex] = useState(0);
+  const [downloading, setDownloading] = useState(false);
+
+  const [showDownloadPopup, setShowDownloadPopup] = useState(false);
+  const [downloadMode, setDownloadMode] = useState("single");
+  const [selectedScenarioForDownload, setSelectedScenarioForDownload] = useState(null);
+
+  const elementMappingRef = useRef({});
+  const overlayIdsRef = useRef([]);
+
+  const location = useLocation();
+  const navigate = useNavigate();
+  const fileId =
+    location.state?.fileId || new URLSearchParams(location.search).get("fileId");
+
+  /* ----- Container callback ref ----- */
   const setContainer = (el) => {
     containerRef.current = el;
     setContainerReady(!!el);
   };
 
-  // pastikan container sudah punya ukuran > 0 (kadang 0 kalau parent hidden)
-  const [containerSized, setContainerSized] = useState(false);
   useLayoutEffect(() => {
     if (!containerReady) return;
     const el = containerRef.current;
@@ -64,9 +90,8 @@ export default function ScenarioPage() {
     return () => ro.disconnect();
   }, [containerReady]);
 
-  const [bpmnReady, setBpmnReady] = useState(false);
+  /* ----- Lazy-load BPMN viewer ----- */
   useEffect(() => {
-    
     (async () => {
       try {
         const M = await import("bpmn-js/lib/NavigatedViewer");
@@ -79,37 +104,7 @@ export default function ScenarioPage() {
     })();
   }, []);
 
-  const overlayIdsRef = useRef([]);
-  const elementMappingRef = useRef({});
-
-  const location = useLocation();
-  const navigate = useNavigate();
-
-  const [data, setData] = useState(null);
-  const [currentPathIndex, setCurrentPathIndex] = useState(0);
-  const [elementNames, setElementNames] = useState({});
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [downloading, setDownloading] = useState(false);
-
-  // Download popup
-  const [showDownloadPopup, setShowDownloadPopup] = useState(false);
-  const [downloadMode, setDownloadMode] = useState("single"); // 'single' | 'all'
-  const [selectedScenarioForDownload, setSelectedScenarioForDownload] = useState(null);
-
-  const fileId =
-    location.state?.fileId || new URLSearchParams(location.search).get("fileId");
-
-  const getScenarios = (d) =>
-    (d?.testScenariosJson && Array.isArray(d.testScenariosJson)
-      ? d.testScenariosJson
-      : Array.isArray(d?.testScenarios)
-      ? d.testScenarios
-      : []) || [];
-
-  const scenarios = useMemo(() => getScenarios(data), [data]);
-
-  /* ===== Fetch BPMN File ===== */
+  /* ----- Fetch BPMN file ----- */
   useEffect(() => {
     if (!fileId) {
       navigate("/");
@@ -118,197 +113,36 @@ export default function ScenarioPage() {
 
     let cancelled = false;
 
-    const fetchData = async () => {
+    (async () => {
       try {
         setLoading(true);
         setError(null);
-
         const res = await authFetch(
           `${API_BASE}/api/bpmn/files/${fileId}`,
           { method: "GET" },
           { onUnauthorizedRedirectTo: "/login" }
         );
         if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-
         const json = await res.json();
         if (!cancelled) setData(json);
       } catch (err) {
-        if (!cancelled) setError(err.message);
+        if (!cancelled) setError(err.message || "Failed to load BPMN");
       } finally {
         if (!cancelled) setLoading(false);
       }
-    };
+    })();
 
-    fetchData();
     return () => {
       cancelled = true;
     };
   }, [fileId, navigate]);
 
-  /* ===== Init Viewer setelah SEMUA siap ===== */
-useEffect(() => {
-  if (!bpmnReady || !containerSized || !data?.bpmnXml) return;
-
-  try {
-    viewerRef.current?.destroy();
-  } catch {}
-
-  const init = async () => {
-    const viewer = new BpmnViewerLocal({
-      container: containerRef.current,
-      width: "100%",
-      height: "520px",
-    });
-    viewerRef.current = viewer;
-
-    // ✅ Import XML sekali saja
-    await viewer.importXML(data.bpmnXml);
-
-    // ✅ bangun mapping sekali di sini
-    const mapping = buildElementMapping(viewer);
-    elementMappingRef.current = mapping;
-
-    extractElementNames(viewer);
-
-    const canvas = viewer.get("canvas");
-    const bus = viewer.get("eventBus");
-
-    const fit = () => {
-      try {
-        canvas.resized();
-        canvas.zoom("fit-viewport");
-        requestAnimationFrame(() => {
-          canvas.resized();
-          canvas.zoom("fit-viewport");
-        });
-      } catch {}
-    };
-
-    fit();
-    bus.on("import.done", fit);
-    bus.on("import.render.complete", () => {
-      fixTextStyling();
-      fit();
-    });
-
-    // ✅ highlight path pertama bila ada
-    const list = getScenarios(data);
-    if (list.length > 0) {
-      const ids = convertToActualIds(list[0]?.rawPath || [], mapping);
-      highlightPath(viewer, ids);
-    }
-  };
-
-  init();
-
-  return () => {
-    try {
-      viewerRef.current?.destroy();
-    } catch {}
-  };
-}, [bpmnReady, containerSized, data]);
-
-
-  /* ===== React ke pergantian path ===== */
-  useEffect(() => {
-    if (!scenarios.length || !viewerRef.current) return;
-    const actualIds = convertToActualIds(scenarios[currentPathIndex]?.rawPath || []);
-    highlightPath(actualIds);
-  }, [currentPathIndex, scenarios.length]);
-
-  /* ===== Helpers BPMN ===== */
-
-  const buildElementMapping = (viewer, d) => {
-    const registry = viewer.get("elementRegistry");
-    const elements = registry.getAll();
-    const mapping = {};
-
-    if (d.elementsJson && Array.isArray(d.elementsJson)) {
-      d.elementsJson.forEach((elem) => {
-        if (elem?.id) {
-          if (elem.lane && elem.name) {
-            mapping[`[${elem.lane}] ${elem.name}`] = elem.id;
-          }
-          if (elem.name) {
-            mapping[elem.name] = elem.id;
-            mapping[`[System] ${elem.name}`] = elem.id;
-          }
-        }
-      });
-    }
-
-    elements.forEach((el) => {
-      const bo = el.businessObject;
-      if (bo && bo.name) {
-        mapping[bo.name] = el.id;
-
-        if (el.parent && el.parent.type === "bpmn:SubProcess") {
-          mapping[`[System] ${bo.name}`] = el.id;
-        }
-
-        const laneName = findElementLaneName(el, elements);
-        if (laneName) {
-          mapping[`[${laneName}] ${bo.name}`] = el.id;
-        }
-      }
-    });
-
-    elementMappingRef.current = mapping;
-  };
-
-  const findElementLaneName = (element, allElements) => {
-    const lanes = allElements.filter((el) => el.type === "bpmn:Lane");
-    for (const lane of lanes) {
-      const flowNodes = lane?.businessObject?.flowNodeRef || [];
-      const isInLane = flowNodes.some(
-        (n) => n && element.businessObject && n.id === element.businessObject.id
-      );
-      if (isInLane) return lane.businessObject?.name || lane.id;
-    }
-    return null;
-  };
-
-  const convertToActualIds = (displayNames) => {
-    const mapping = elementMappingRef.current;
-    return (displayNames || [])
-      .map((displayName) => {
-        let actualId = mapping[displayName];
-
-        // hapus prefix [Lane] atau [System]
-        if (!actualId && /\[.*?\]\s+/.test(displayName)) {
-          const withoutBracket = displayName.replace(/^\[.*?\]\s*/, "");
-          actualId = mapping[withoutBracket];
-        }
-
-        if (!actualId && displayName.startsWith("[System]")) {
-          const clean = displayName.replace(/^\[.*?\]\s*/, "");
-          actualId = mapping[clean];
-        }
-
-        if (!actualId) {
-          console.warn(`No mapping found for display name: ${displayName}`);
-          return displayName; // biarin, nanti di-filter
-        }
-        return actualId;
-      })
-      .filter(Boolean);
-  };
-
-  const typeClassFor = (el) => {
-    const t = el?.type || el?.businessObject?.$type || "";
-    if (t.includes("SequenceFlow")) return "type-seq";
-    if (t.includes("MessageFlow")) return "type-msg";
-    if (t.includes("Task") || t.includes("Activity")) return "type-task";
-    if (t.includes("Event")) return "type-event";
-    if (t.includes("Gateway")) return "type-gateway";
-    return "type-other";
-  };
-
+  /* ----- Helpers ----- */
   const fixTextStyling = () => {
     const viewer = viewerRef.current;
     if (!viewer) return;
-    const canvasContainer = viewer.get("canvas").getContainer();
-    const texts = canvasContainer.querySelectorAll(".djs-label text, .djs-visual text");
+    const container = viewer.get("canvas").getContainer();
+    const texts = container.querySelectorAll(".djs-label text, .djs-visual text");
     texts.forEach((t) => {
       t.removeAttribute("stroke");
       t.removeAttribute("stroke-width");
@@ -324,28 +158,6 @@ useEffect(() => {
     });
   };
 
-  const extractElementNames = (viewer) => {
-    const registry = viewer.get("elementRegistry");
-    const elements = registry.getAll();
-    const nameMap = {};
-    elements.forEach((el) => {
-      const bo = el.businessObject;
-      nameMap[el.id] = (bo && (bo.name || bo.id)) || el.id;
-    });
-    setElementNames(nameMap);
-  };
-
-  const findFlowIdsBetween = (fromId, toId) => {
-    const viewer = viewerRef.current;
-    if (!viewer) return [];
-    const reg = viewer.get("elementRegistry");
-    const from = reg.get(fromId);
-    if (!from || !from.outgoing) return [];
-    return from.outgoing
-      .filter((f) => f && f.target && f.target.id === toId)
-      .map((f) => f.id);
-  };
-
   const clearHighlights = () => {
     const viewer = viewerRef.current;
     if (!viewer) return;
@@ -356,12 +168,6 @@ useEffect(() => {
     reg.getAll().forEach((el) => {
       canvas.removeMarker(el.id, "highlight-path");
       canvas.removeMarker(el.id, "highlight-subprocess");
-      canvas.removeMarker(el.id, "type-task");
-      canvas.removeMarker(el.id, "type-event");
-      canvas.removeMarker(el.id, "type-gateway");
-      canvas.removeMarker(el.id, "type-seq");
-      canvas.removeMarker(el.id, "type-msg");
-      canvas.removeMarker(el.id, "type-other");
     });
 
     try {
@@ -370,81 +176,17 @@ useEffect(() => {
     overlayIdsRef.current = [];
 
     const customStyles = document.querySelectorAll(".bpmn-highlight-style");
-    customStyles.forEach((style) => style.remove());
+    customStyles.forEach((s) => s.remove());
   };
 
-  const highlightPath = (actualIds) => {
-    const viewer = viewerRef.current;
-    if (!viewer || !Array.isArray(actualIds) || actualIds.length === 0) {
-      console.warn("Invalid path for highlighting:", actualIds);
-      return;
-    }
+  const getScenarios = (d) =>
+    (d?.testScenariosJson && Array.isArray(d.testScenariosJson)
+      ? d.testScenariosJson
+      : Array.isArray(d?.testScenarios)
+      ? d.testScenarios
+      : []) || [];
 
-    clearHighlights();
-
-    const canvas = viewer.get("canvas");
-    const reg = viewer.get("elementRegistry");
-
-    const validElements = actualIds
-      .map((id) => {
-        const element = reg.get(id);
-        if (!element) {
-          console.warn(`Element not found: ${id}`);
-          return null;
-        }
-        return {
-          id,
-          element,
-          isSubprocessElement: element.parent && element.parent.type === "bpmn:SubProcess"
-        };
-      })
-      .filter(Boolean);
-
-    if (validElements.length === 0) {
-      canvas.zoom("fit-viewport");
-      return;
-    }
-
-    validElements.forEach(({ id, element, isSubprocessElement }) => {
-      canvas.addMarker(id, isSubprocessElement ? "highlight-subprocess" : "highlight-path");
-      canvas.addMarker(id, typeClassFor(element));
-    });
-
-    for (let i = 0; i < validElements.length - 1; i++) {
-      const fromId = validElements[i].id;
-      const toId = validElements[i + 1].id;
-      const flowIds = findFlowIdsBetween(fromId, toId);
-      flowIds.forEach((fid) => {
-        canvas.addMarker(fid, "highlight-path");
-        canvas.addMarker(fid, "type-seq");
-      });
-    }
-
-    canvas.resized();
-    canvas.zoom("fit-viewport");
-    setTimeout(() => {
-      fixTextStyling();
-      canvas.resized();
-      canvas.zoom("fit-viewport");
-    }, 50);
-  };
-
-  /* ===== UI Events ===== */
-  const handlePrev = () => {
-    if (!scenarios.length) return;
-    setCurrentPathIndex((i) => (i === 0 ? scenarios.length - 1 : i - 1));
-  };
-
-  const handleNext = () => {
-    if (!scenarios.length) return;
-    setCurrentPathIndex((i) => (i === scenarios.length - 1 ? 0 : i + 1));
-  };
-
-  const handleRowClick = (index) => {
-    setCurrentPathIndex(index);
-    const actualIds = convertToActualIds(scenarios[index]?.rawPath || []);
-    highlightPath(actualIds);
-  };
+  const scenarios = useMemo(() => getScenarios(data), [data]);
 
   const getReadableScenarioPath = (pathArray) => {
     if (!Array.isArray(pathArray)) return "-";
@@ -466,11 +208,99 @@ useEffect(() => {
     return { text: "No expected result", color: "text-gray-600", bgColor: "bg-gray-100" };
   };
 
+  /* ----- Init viewer once ready ----- */
+  useEffect(() => {
+    if (!bpmnReady || !containerSized || !data?.bpmnXml) return;
+
+    // cleanup old instance
+    try {
+      viewerRef.current?.destroy();
+    } catch {}
+
+    const init = async () => {
+      const viewer = new BpmnViewerLocal({
+        container: containerRef.current,
+        width: "100%",
+        height: "520px"
+      });
+      viewerRef.current = viewer;
+
+      await viewer.importXML(data.bpmnXml);
+
+      // build mapping once
+      const mapping = buildElementMapping(viewer);
+      elementMappingRef.current = mapping;
+
+      const canvas = viewer.get("canvas");
+      const bus = viewer.get("eventBus");
+
+      const fit = () => {
+        try {
+          canvas.resized();
+          canvas.zoom("fit-viewport");
+          requestAnimationFrame(() => {
+            canvas.resized();
+            canvas.zoom("fit-viewport");
+          });
+        } catch {}
+      };
+
+      fit();
+      bus.on("import.done", fit);
+      bus.on("import.render.complete", () => {
+        fixTextStyling();
+        fit();
+      });
+
+      // highlight first path if available
+      const list = getScenarios(data);
+      if (list.length > 0) {
+        const ids = convertToActualIds(list[0]?.rawPath || [], mapping);
+        highlightPath(viewer, ids);
+      }
+    };
+
+    init();
+
+    return () => {
+      try {
+        viewerRef.current?.destroy();
+      } catch {}
+    };
+  }, [bpmnReady, containerSized, data]);
+
+  /* ----- Re-highlight when index changes ----- */
+  useEffect(() => {
+    if (!scenarios.length || !viewerRef.current) return;
+    const mapping = elementMappingRef.current;
+    const ids = convertToActualIds(scenarios[currentPathIndex]?.rawPath || [], mapping);
+    highlightPath(viewerRef.current, ids);
+  }, [currentPathIndex, scenarios, scenarios.length]);
+
+  /* ----- UI handlers ----- */
+  const handlePrev = () => {
+    if (!scenarios.length) return;
+    setCurrentPathIndex((i) => (i === 0 ? scenarios.length - 1 : i - 1));
+  };
+
+  const handleNext = () => {
+    if (!scenarios.length) return;
+    setCurrentPathIndex((i) => (i === scenarios.length - 1 ? 0 : i + 1));
+  };
+
+  const handleRowClick = (index) => {
+    setCurrentPathIndex(index);
+    const mapping = elementMappingRef.current;
+    const ids = convertToActualIds(scenarios[index]?.rawPath || [], mapping);
+    highlightPath(viewerRef.current, ids);
+  };
+
   const resetHighlight = () => {
     clearHighlights();
     setTimeout(fixTextStyling, 50);
   };
 
+  /* ----- Download ----- */
   const getActionSteps = (scenarioStep) => {
     if (!scenarioStep) return [];
     return scenarioStep
@@ -624,8 +454,7 @@ useEffect(() => {
     }
   };
 
-  /* ===== Render ===== */
-
+  /* ----- Render ----- */
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -706,8 +535,10 @@ useEffect(() => {
             </div>
           </div>
           <div className="p-6">
-            {/* gunakan callback ref */}
-            <div ref={setContainer} className="w-full h-[520px] rounded-lg border border-gray-200 overflow-hidden bg-gray-50" />
+            <div
+              ref={setContainer}
+              className="w-full h-[520px] rounded-lg border border-gray-200 overflow-hidden bg-gray-50"
+            />
           </div>
         </div>
 
@@ -902,30 +733,25 @@ useEffect(() => {
         fileId={fileId}
       />
 
-   <style>{`
+      {/* Highlight CSS */}
+      <style>{`
 /* ===== Layout dasar ===== */
 .djs-container { width: 100% !important; height: 100% !important; }
 
 /* Z-index */
 .djs-element[data-element-id*="Lane"],
-.djs-element[data-element-id*="Participant"],
-.djs-element[class*="Lane"],
-.djs-element[class*="Participant"] { z-index: 1 !important; }
+.djs-element[data-element-id*="Participant"] { z-index: 1 !important; }
 
 .djs-element[data-element-id*="Task"],
 .djs-element[data-element-id*="Activity"],
 .djs-element[data-element-id*="Event"],
-.djs-element[data-element-id*="Gateway"],
-.djs-element[class*="Task"],
-.djs-element[class*="Activity"],
-.djs-element[class*="Event"],
-.djs-element[class*="Gateway"] { z-index: 10 !important; }
+.djs-element[data-element-id*="Gateway"] { z-index: 10 !important; }
 
 .djs-element.highlight-path,
 .djs-element.highlight-subprocess { z-index: 10000 !important; position: relative; }
 .djs-connection.highlight-path { z-index: 9999 !important; }
 
-/* Text reset & di atas shape */
+/* Text reset */
 .djs-label text, .djs-visual text {
   stroke: none !important; stroke-width: 0 !important; paint-order: normal !important;
   font-weight: normal !important; fill: black !important; font-family: Arial, sans-serif !important; font-size: 12px !important;
@@ -935,22 +761,21 @@ useEffect(() => {
 
 /* EVENTS */
 .djs-element.highlight-path .djs-visual > circle {
-  fill: #98E9DD !important; stroke: #000000 !important; stroke-width: 2 !important;
+  fill: #98E9DD !important; stroke: #000 !important; stroke-width: 2 !important;
 }
-/* Ikon di dalam event (amplop, dsb) tetap kontras */
 .djs-element.highlight-path .djs-visual > path {
-  stroke: #000000 !important; stroke-width: 1.5px !important; fill: none;
+  stroke: #000 !important; stroke-width: 1.5px !important; fill: none;
 }
 
 /* TASKS */
 .djs-element.highlight-path .djs-visual > rect {
-  fill: #FFFFBD !important; stroke: #000000 !important; stroke-width: 2 !important;
+  fill: #FFFFBD !important; stroke: #000 !important; stroke-width: 2 !important;
 }
 
 /* GATEWAYS */
 .djs-element.highlight-path .djs-visual > polygon,
 .djs-element.highlight-path .djs-visual > circle {
-  fill: #E0E0E0 !important; stroke: #000000 !important; stroke-width: 2 !important;
+  fill: #E0E0E0 !important; stroke: #000 !important; stroke-width: 2 !important;
 }
 
 /* SUBPROCESS container */
@@ -964,12 +789,27 @@ useEffect(() => {
 /* CONNECTIONS */
 .djs-connection.highlight-path .djs-visual > path,
 .djs-connection.highlight-path .djs-visual > polyline {
-  stroke: #000000 !important; stroke-width: 3px !important;
+  stroke: #000 !important; stroke-width: 3px !important;
 }
-.djs-connection.highlight-path[class*="MessageFlow"] .djs-visual > path {
-  stroke: #000000 !important; stroke-width: 2px !important; stroke-dasharray: 8, 4 !important;
+/* message flow dashed */
+.djs-connection.type-bpmn\\:MessageFlow.highlight-path .djs-visual > path {
+  stroke: #000 !important;
+  stroke-width: 2px !important;
+  stroke-dasharray: 8, 4 !important;
 }
-  /* Timer Event */
+
+/* extra: specific flavors */
+.djs-element.highlight-path[data-element-id*="TimerEvent"] .djs-visual > circle { fill: #FFD580 !important; }
+.djs-element.highlight-path[data-element-id*="SignalEvent"] .djs-visual > circle { fill: #A5D6A7 !important; }
+.djs-element.highlight-path[data-element-id*="ErrorEvent"]  .djs-visual > circle { fill: #FF8A80 !important; }
+.djs-element.highlight-path[data-element-id*="CallActivity"] .djs-visual > rect { fill: #B3E5FC !important; }
+
+/* Visibility */
+.djs-element.highlight-path .djs-visual,
+.djs-element.highlight-subprocess .djs-visual { opacity: 1 !important; visibility: visible !important; }
+
+
+ /* Timer Event */
 .djs-element.highlight-path[data-element-id*="TimerEvent"] .djs-visual > circle {
   fill: #FFD580 !important; /* orange */
   stroke: #000 !important;
@@ -994,11 +834,9 @@ useEffect(() => {
 }
 
 
-/* Visibility */
-.djs-element.highlight-path .djs-visual,
-.djs-element.highlight-subprocess .djs-visual { opacity: 1 !important; visibility: visible !important; }
 
-`}</style>
+
+      `}</style>
     </div>
   );
 }
