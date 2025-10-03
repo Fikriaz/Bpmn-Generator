@@ -26,11 +26,12 @@ import {
 } from "../components/ui/Table";
 import { API_BASE, authFetch } from "../utils/auth";
 
-// utils (mapping + highlight)
+// ✅ Import dari utils
 import {
   buildElementMapping,
   convertToActualIds,
-  highlightPath
+  highlightPath,
+  clearAllHighlights
 } from "../utils/bpmnHighlight";
 
 // CSS wajib bpmn-js
@@ -39,43 +40,40 @@ import "bpmn-js/dist/assets/bpmn-font/css/bpmn.css";
 import "bpmn-js/dist/assets/bpmn-font/css/bpmn-codes.css";
 import "bpmn-js/dist/assets/bpmn-font/css/bpmn-embedded.css";
 
-// dynamic viewer (hindari top-level await)
-let BpmnViewerLocal = null;
+// ✅ Dynamic import viewer
+let BpmnViewer = null;
 
 export default function ScenarioPage() {
-  /* ----- Refs & State ----- */
   const viewerRef = useRef(null);
   const containerRef = useRef(null);
+  const elementMappingRef = useRef({});
 
   const [containerReady, setContainerReady] = useState(false);
   const [containerSized, setContainerSized] = useState(false);
   const [bpmnReady, setBpmnReady] = useState(false);
 
+  const location = useLocation();
+  const navigate = useNavigate();
+
   const [data, setData] = useState(null);
+  const [currentPathIndex, setCurrentPathIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-
-  const [currentPathIndex, setCurrentPathIndex] = useState(0);
   const [downloading, setDownloading] = useState(false);
 
   const [showDownloadPopup, setShowDownloadPopup] = useState(false);
   const [downloadMode, setDownloadMode] = useState("single");
   const [selectedScenarioForDownload, setSelectedScenarioForDownload] = useState(null);
 
-  const elementMappingRef = useRef({});
-  const overlayIdsRef = useRef([]);
+  const fileId = location.state?.fileId || new URLSearchParams(location.search).get("fileId");
 
-  const location = useLocation();
-  const navigate = useNavigate();
-  const fileId =
-    location.state?.fileId || new URLSearchParams(location.search).get("fileId");
-
-  /* ----- Container callback ref ----- */
+  // ✅ Callback ref untuk container
   const setContainer = (el) => {
     containerRef.current = el;
     setContainerReady(!!el);
   };
 
+  // ✅ Check container size
   useLayoutEffect(() => {
     if (!containerReady) return;
     const el = containerRef.current;
@@ -90,21 +88,21 @@ export default function ScenarioPage() {
     return () => ro.disconnect();
   }, [containerReady]);
 
-  /* ----- Lazy-load BPMN viewer ----- */
+  // ✅ Lazy-load BPMN viewer
   useEffect(() => {
     (async () => {
       try {
         const M = await import("bpmn-js/lib/NavigatedViewer");
-        BpmnViewerLocal = M.default;
+        BpmnViewer = M.default;
       } catch {
         const M = await import("bpmn-js");
-        BpmnViewerLocal = M.default;
+        BpmnViewer = M.default;
       }
       setBpmnReady(true);
     })();
   }, []);
 
-  /* ----- Fetch BPMN file ----- */
+  // ✅ Fetch BPMN file
   useEffect(() => {
     if (!fileId) {
       navigate("/");
@@ -113,71 +111,32 @@ export default function ScenarioPage() {
 
     let cancelled = false;
 
-    (async () => {
+    const fetchData = async () => {
       try {
         setLoading(true);
         setError(null);
+
         const res = await authFetch(
           `${API_BASE}/api/bpmn/files/${fileId}`,
           { method: "GET" },
           { onUnauthorizedRedirectTo: "/login" }
         );
         if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+
         const json = await res.json();
         if (!cancelled) setData(json);
       } catch (err) {
-        if (!cancelled) setError(err.message || "Failed to load BPMN");
+        if (!cancelled) setError(err.message);
       } finally {
         if (!cancelled) setLoading(false);
       }
-    })();
+    };
 
+    fetchData();
     return () => {
       cancelled = true;
     };
   }, [fileId, navigate]);
-
-  /* ----- Helpers ----- */
-  const fixTextStyling = () => {
-    const viewer = viewerRef.current;
-    if (!viewer) return;
-    const container = viewer.get("canvas").getContainer();
-    const texts = container.querySelectorAll(".djs-label text, .djs-visual text");
-    texts.forEach((t) => {
-      t.removeAttribute("stroke");
-      t.removeAttribute("stroke-width");
-      t.style.stroke = "none";
-      t.style.strokeWidth = "0";
-      t.style.paintOrder = "normal";
-      t.style.fontWeight = "normal";
-      t.style.fill = "black";
-      t.style.vectorEffect = "non-scaling-stroke";
-      t.style.shapeRendering = "geometricPrecision";
-      t.style.fontFamily = "Arial, sans-serif";
-      t.style.fontSize = "12px";
-    });
-  };
-
-  const clearHighlights = () => {
-    const viewer = viewerRef.current;
-    if (!viewer) return;
-    const canvas = viewer.get("canvas");
-    const reg = viewer.get("elementRegistry");
-    const overlays = viewer.get("overlays");
-
-    reg.getAll().forEach((el) => {
-      canvas.removeMarker(el.id, "highlight-path");
-      canvas.removeMarker(el.id, "highlight-subprocess");
-    });
-
-    try {
-      overlayIdsRef.current.forEach((id) => overlays.remove(id));
-    } catch {}
-    overlayIdsRef.current = [];
-
-    const customStyles = document.querySelectorAll(".bpmn-highlight-style");
-    customStyles.forEach((s) => s.remove());
-  };
 
   const getScenarios = (d) =>
     (d?.testScenariosJson && Array.isArray(d.testScenariosJson)
@@ -187,6 +146,89 @@ export default function ScenarioPage() {
       : []) || [];
 
   const scenarios = useMemo(() => getScenarios(data), [data]);
+
+  // ✅ Init viewer setelah semua siap
+  useEffect(() => {
+    if (!bpmnReady || !containerSized || !data?.bpmnXml || !BpmnViewer) return;
+
+    try {
+      viewerRef.current?.destroy();
+    } catch {}
+
+    const init = async () => {
+      const viewer = new BpmnViewer({
+        container: containerRef.current,
+        width: "100%",
+        height: "520px"
+      });
+      viewerRef.current = viewer;
+
+      await viewer.importXML(data.bpmnXml);
+
+      // ✅ Build mapping sekali
+      const mapping = buildElementMapping(viewer);
+      elementMappingRef.current = mapping;
+
+      const canvas = viewer.get("canvas");
+      const bus = viewer.get("eventBus");
+
+      const fit = () => {
+        try {
+          canvas.resized();
+          canvas.zoom("fit-viewport");
+        } catch {}
+      };
+
+      fit();
+      bus.on("import.done", fit);
+      bus.on("import.render.complete", fit);
+
+      // ✅ Highlight path pertama
+      const list = getScenarios(data);
+      if (list.length > 0) {
+        const ids = convertToActualIds(list[0]?.rawPath || [], mapping);
+        highlightPath(viewer, ids);
+      }
+    };
+
+    init();
+
+    return () => {
+      try {
+        viewerRef.current?.destroy();
+      } catch {}
+    };
+  }, [bpmnReady, containerSized, data]);
+
+  // ✅ Re-highlight saat path berubah
+  useEffect(() => {
+    if (!scenarios.length || !viewerRef.current) return;
+    const mapping = elementMappingRef.current;
+    const ids = convertToActualIds(scenarios[currentPathIndex]?.rawPath || [], mapping);
+    highlightPath(viewerRef.current, ids);
+  }, [currentPathIndex, scenarios, scenarios.length]);
+
+  // ✅ UI Handlers
+  const handlePrev = () => {
+    if (!scenarios.length) return;
+    setCurrentPathIndex((i) => (i === 0 ? scenarios.length - 1 : i - 1));
+  };
+
+  const handleNext = () => {
+    if (!scenarios.length) return;
+    setCurrentPathIndex((i) => (i === scenarios.length - 1 ? 0 : i + 1));
+  };
+
+  const handleRowClick = (index) => {
+    setCurrentPathIndex(index);
+    const mapping = elementMappingRef.current;
+    const ids = convertToActualIds(scenarios[index]?.rawPath || [], mapping);
+    highlightPath(viewerRef.current, ids);
+  };
+
+  const resetHighlight = () => {
+    clearAllHighlights(viewerRef.current);
+  };
 
   const getReadableScenarioPath = (pathArray) => {
     if (!Array.isArray(pathArray)) return "-";
@@ -208,99 +250,6 @@ export default function ScenarioPage() {
     return { text: "No expected result", color: "text-gray-600", bgColor: "bg-gray-100" };
   };
 
-  /* ----- Init viewer once ready ----- */
-  useEffect(() => {
-    if (!bpmnReady || !containerSized || !data?.bpmnXml) return;
-
-    // cleanup old instance
-    try {
-      viewerRef.current?.destroy();
-    } catch {}
-
-    const init = async () => {
-      const viewer = new BpmnViewerLocal({
-        container: containerRef.current,
-        width: "100%",
-        height: "520px"
-      });
-      viewerRef.current = viewer;
-
-      await viewer.importXML(data.bpmnXml);
-
-      // build mapping once
-      const mapping = buildElementMapping(viewer);
-      elementMappingRef.current = mapping;
-
-      const canvas = viewer.get("canvas");
-      const bus = viewer.get("eventBus");
-
-      const fit = () => {
-        try {
-          canvas.resized();
-          canvas.zoom("fit-viewport");
-          requestAnimationFrame(() => {
-            canvas.resized();
-            canvas.zoom("fit-viewport");
-          });
-        } catch {}
-      };
-
-      fit();
-      bus.on("import.done", fit);
-      bus.on("import.render.complete", () => {
-        fixTextStyling();
-        fit();
-      });
-
-      // highlight first path if available
-      const list = getScenarios(data);
-      if (list.length > 0) {
-        const ids = convertToActualIds(list[0]?.rawPath || [], mapping);
-        highlightPath(viewer, ids);
-      }
-    };
-
-    init();
-
-    return () => {
-      try {
-        viewerRef.current?.destroy();
-      } catch {}
-    };
-  }, [bpmnReady, containerSized, data]);
-
-  /* ----- Re-highlight when index changes ----- */
-  useEffect(() => {
-    if (!scenarios.length || !viewerRef.current) return;
-    const mapping = elementMappingRef.current;
-    const ids = convertToActualIds(scenarios[currentPathIndex]?.rawPath || [], mapping);
-    highlightPath(viewerRef.current, ids);
-  }, [currentPathIndex, scenarios, scenarios.length]);
-
-  /* ----- UI handlers ----- */
-  const handlePrev = () => {
-    if (!scenarios.length) return;
-    setCurrentPathIndex((i) => (i === 0 ? scenarios.length - 1 : i - 1));
-  };
-
-  const handleNext = () => {
-    if (!scenarios.length) return;
-    setCurrentPathIndex((i) => (i === scenarios.length - 1 ? 0 : i + 1));
-  };
-
-  const handleRowClick = (index) => {
-    setCurrentPathIndex(index);
-    const mapping = elementMappingRef.current;
-    const ids = convertToActualIds(scenarios[index]?.rawPath || [], mapping);
-    highlightPath(viewerRef.current, ids);
-  };
-
-  const resetHighlight = () => {
-    clearHighlights();
-    setTimeout(fixTextStyling, 50);
-  };
-
-  /* ----- Download ----- */
   const getActionSteps = (scenarioStep) => {
     if (!scenarioStep) return [];
     return scenarioStep
@@ -317,7 +266,7 @@ export default function ScenarioPage() {
     setShowDownloadPopup(true);
   };
 
-  const handleDownloadPath = (scenario, index) => {
+  const handleDownloadPath = (scenario) => {
     setDownloadMode("single");
     setSelectedScenarioForDownload(scenario);
     setShowDownloadPopup(true);
@@ -347,18 +296,11 @@ export default function ScenarioPage() {
 
         if (!res.ok) throw new Error("Failed to download");
 
-        const contentDisposition = res.headers.get("Content-Disposition");
-        let filename = `all-test-scenarios.${format === "pdf" ? "pdf" : "xlsx"}`;
-        if (contentDisposition) {
-          const m = contentDisposition.match(/filename="?(.+)"?/);
-          if (m) filename = m[1];
-        }
-
         const blob = await res.blob();
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = filename;
+        a.download = `all-test-scenarios.${format === "pdf" ? "pdf" : "xlsx"}`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -427,10 +369,7 @@ export default function ScenarioPage() {
           { onUnauthorizedRedirectTo: "/login" }
         );
 
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`Server error: ${response.status} - ${errorText}`);
-        }
+        if (!response.ok) throw new Error(`Server error: ${response.status}`);
 
         const blob = await response.blob();
         if (blob.size === 0) throw new Error("Received empty file from server");
@@ -454,7 +393,7 @@ export default function ScenarioPage() {
     }
   };
 
-  /* ----- Render ----- */
+  // ✅ Loading
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -466,6 +405,7 @@ export default function ScenarioPage() {
     );
   }
 
+  // ✅ Error
   if (error) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -535,10 +475,7 @@ export default function ScenarioPage() {
             </div>
           </div>
           <div className="p-6">
-            <div
-              ref={setContainer}
-              className="w-full h-[520px] rounded-lg border border-gray-200 overflow-hidden bg-gray-50"
-            />
+            <div ref={setContainer} className="w-full h-[520px] rounded-lg border border-gray-200 overflow-hidden bg-gray-50" />
           </div>
         </div>
 
@@ -690,7 +627,7 @@ export default function ScenarioPage() {
                               className="flex items-center space-x-1 bg-gray-600 hover:bg-gray-700 text-white text-xs px-3 py-2 rounded-md transition-colors duration-200"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleDownloadPath(scenario, index);
+                                handleDownloadPath(scenario);
                               }}
                             >
                               <Download className="w-3 h-3" />
@@ -724,7 +661,6 @@ export default function ScenarioPage() {
         </div>
       </main>
 
-      {/* Download Popup */}
       <DownloadPopup
         isOpen={showDownloadPopup}
         onClose={() => setShowDownloadPopup(false)}
@@ -733,109 +669,307 @@ export default function ScenarioPage() {
         fileId={fileId}
       />
 
-      {/* Highlight CSS */}
       <style>{`
-/* ===== Layout dasar ===== */
-.djs-container { width: 100% !important; height: 100% !important; }
+/* ============================================================================
+   BPMN Highlight CSS - Complete Version
+   Untuk ScenarioPage.jsx dan ViewDetailPage.jsx
+   ============================================================================ */
 
-/* Z-index */
+/* ===== 1. LAYOUT & CONTAINER ===== */
+.djs-container {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* ===== 2. Z-INDEX HIERARCHY ===== */
+/* Lane/Pool (background) - paling belakang */
 .djs-element[data-element-id*="Lane"],
-.djs-element[data-element-id*="Participant"] { z-index: 1 !important; }
+.djs-element[data-element-id*="Participant"],
+.djs-element[class*="Lane"],
+.djs-element[class*="Participant"] {
+  z-index: 1 !important;
+}
 
+/* Element biasa (Task/Event/Gateway) - di tengah */
 .djs-element[data-element-id*="Task"],
 .djs-element[data-element-id*="Activity"],
 .djs-element[data-element-id*="Event"],
-.djs-element[data-element-id*="Gateway"] { z-index: 10 !important; }
+.djs-element[data-element-id*="Gateway"],
+.djs-element[class*="Task"],
+.djs-element[class*="Activity"],
+.djs-element[class*="Event"],
+.djs-element[class*="Gateway"] {
+  z-index: 10 !important;
+}
 
+/* Highlighted elements - paling depan */
 .djs-element.highlight-path,
-.djs-element.highlight-subprocess { z-index: 10000 !important; position: relative; }
-.djs-connection.highlight-path { z-index: 9999 !important; }
-
-/* Text reset */
-.djs-label text, .djs-visual text {
-  stroke: none !important; stroke-width: 0 !important; paint-order: normal !important;
-  font-weight: normal !important; fill: black !important; font-family: Arial, sans-serif !important; font-size: 12px !important;
+.djs-element.highlight-subprocess {
+  z-index: 10000 !important;
+  position: relative;
 }
-.djs-label { z-index: 100001 !important; pointer-events: none !important; }
-.highlight-path .djs-label, .highlight-subprocess .djs-label { z-index: 100002 !important; }
 
-/* EVENTS */
-.djs-element.highlight-path .djs-visual > circle {
-  fill: #98E9DD !important; stroke: #000 !important; stroke-width: 2 !important;
+/* Highlighted connections */
+.djs-connection.highlight-path {
+  z-index: 9999 !important;
 }
+
+/* ===== 3. TEXT STYLING (FIX STROKE ISSUE) ===== */
+.djs-label text,
+.djs-visual text {
+  stroke: none !important;
+  stroke-width: 0 !important;
+  paint-order: normal !important;
+  font-weight: normal !important;
+  fill: black !important;
+  font-family: Arial, sans-serif !important;
+  font-size: 12px !important;
+  vector-effect: non-scaling-stroke !important;
+  shape-rendering: geometricPrecision !important;
+}
+
+/* Text pada highlighted element harus tetap readable */
+.djs-element.highlight-path .djs-label text,
+.djs-element.highlight-subprocess .djs-label text {
+  stroke: none !important;
+  font-weight: normal !important;
+  fill: black !important;
+}
+
+/* Label z-index - selalu di atas shapes */
+.djs-label {
+  z-index: 100001 !important;
+  pointer-events: none !important;
+}
+
+.highlight-path .djs-label,
+.highlight-subprocess .djs-label {
+  z-index: 100002 !important;
+}
+
+/* ===== 4. EVENTS (Circle) - #98E9DD ===== */
+/* Start Event, End Event, Intermediate Event, Boundary Event */
+.djs-element.highlight-path[data-element-id*="StartEvent"] .djs-visual > circle,
+.djs-element.highlight-path[data-element-id*="EndEvent"] .djs-visual > circle,
+.djs-element.highlight-path[data-element-id*="Event_"] .djs-visual > circle,
+.djs-element.highlight-path[data-element-id*="IntermediateCatchEvent"] .djs-visual > circle,
+.djs-element.highlight-path[data-element-id*="IntermediateThrowEvent"] .djs-visual > circle,
+.djs-element.highlight-path[data-element-id*="BoundaryEvent"] .djs-visual > circle,
+.djs-element.highlight-path[class*="StartEvent"] .djs-visual > circle,
+.djs-element.highlight-path[class*="EndEvent"] .djs-visual > circle,
+.djs-element.highlight-path[class*="IntermediateEvent"] .djs-visual > circle,
+.djs-element.highlight-path[class*="BoundaryEvent"] .djs-visual > circle {
+  fill: #98E9DD !important;
+  stroke: #000000 !important;
+  stroke-width: 2 !important;
+}
+
+/* Icon di dalam event (amplop, jam, dll) - tetap hitam untuk kontras */
 .djs-element.highlight-path .djs-visual > path {
-  stroke: #000 !important; stroke-width: 1.5px !important; fill: none;
+  stroke: #000000 !important;
+  stroke-width: 1.5px !important;
+  fill: none !important;
 }
 
-/* TASKS */
-.djs-element.highlight-path .djs-visual > rect {
-  fill: #FFFFBD !important; stroke: #000 !important; stroke-width: 2 !important;
+/* ===== 5. TASKS (Rectangle) - #FFFFBD ===== */
+/* User Task, Service Task, Manual Task, Script Task, Business Rule Task */
+.djs-element.highlight-path[data-element-id*="Task"] .djs-visual > rect,
+.djs-element.highlight-path[data-element-id*="Activity_"] .djs-visual > rect,
+.djs-element.highlight-path[data-element-id*="UserTask"] .djs-visual > rect,
+.djs-element.highlight-path[data-element-id*="ServiceTask"] .djs-visual > rect,
+.djs-element.highlight-path[data-element-id*="ManualTask"] .djs-visual > rect,
+.djs-element.highlight-path[data-element-id*="ScriptTask"] .djs-visual > rect,
+.djs-element.highlight-path[data-element-id*="BusinessRuleTask"] .djs-visual > rect,
+.djs-element.highlight-path[class*="Task"] .djs-visual > rect,
+.djs-element.highlight-path[class*="Activity"] .djs-visual > rect,
+.djs-element.highlight-path[class*="UserTask"] .djs-visual > rect,
+.djs-element.highlight-path[class*="ServiceTask"] .djs-visual > rect {
+  fill: #FFFFBD !important;
+  stroke: #000000 !important;
+  stroke-width: 2 !important;
 }
 
-/* GATEWAYS */
-.djs-element.highlight-path .djs-visual > polygon,
-.djs-element.highlight-path .djs-visual > circle {
-  fill: #E0E0E0 !important; stroke: #000 !important; stroke-width: 2 !important;
+/* ===== 6. MESSAGE/RECEIVE TASK - #96DF67 (Hijau Muda) ===== */
+.djs-element.highlight-path[data-element-id*="MessageTask"] .djs-visual > rect,
+.djs-element.highlight-path[data-element-id*="ReceiveTask"] .djs-visual > rect,
+.djs-element.highlight-path[data-element-id*="SendTask"] .djs-visual > rect,
+.djs-element.highlight-path[class*="MessageTask"] .djs-visual > rect,
+.djs-element.highlight-path[class*="ReceiveTask"] .djs-visual > rect,
+.djs-element.highlight-path[class*="SendTask"] .djs-visual > rect {
+  fill: #96DF67 !important;
+  stroke: #000000 !important;
+  stroke-width: 2 !important;
 }
 
-/* SUBPROCESS container */
+/* ===== 7. GATEWAYS (Diamond/Polygon) - #E0E0E0 ===== */
+/* Exclusive Gateway, Parallel Gateway, Inclusive Gateway, Event-Based Gateway */
+.djs-element.highlight-path[data-element-id*="Gateway"] .djs-visual > polygon,
+.djs-element.highlight-path[data-element-id*="Gateway"] .djs-visual > circle,
+.djs-element.highlight-path[class*="Gateway"] .djs-visual > polygon,
+.djs-element.highlight-path[class*="Gateway"] .djs-visual > circle,
+.djs-element.highlight-path[class*="ExclusiveGateway"] .djs-visual > polygon,
+.djs-element.highlight-path[class*="ParallelGateway"] .djs-visual > polygon,
+.djs-element.highlight-path[class*="InclusiveGateway"] .djs-visual > polygon,
+.djs-element.highlight-path[class*="EventBasedGateway"] .djs-visual > polygon {
+  fill: #E0E0E0 !important;
+  stroke: #000000 !important;
+  stroke-width: 2 !important;
+}
+
+/* ===== 8. SUBPROCESS - Semi-transparent #98E9DD ===== */
 .djs-element.highlight-subprocess .djs-visual > rect,
 .djs-element.highlight-subprocess .djs-visual > circle,
 .djs-element.highlight-subprocess .djs-visual > polygon,
 .djs-element.highlight-subprocess .djs-visual > path {
-  fill: rgba(152, 233, 221, 0.3) !important; stroke: #000 !important; stroke-width: 2 !important;
+  fill: rgba(152, 233, 221, 0.3) !important;
+  stroke: #000000 !important;
+  stroke-width: 2 !important;
 }
 
-/* CONNECTIONS */
+/* SubProcess yang tidak di-highlight */
+.djs-element[data-element-id*="SubProcess"] .djs-visual > rect,
+.djs-element[class*="SubProcess"] .djs-visual > rect {
+  fill: rgba(255, 255, 255, 0.8) !important;
+  stroke: #dddddd !important;
+  stroke-width: 1px !important;
+}
+
+/* SubProcess yang di-highlight */
+.djs-element[data-element-id*="SubProcess"].highlight-subprocess .djs-visual > rect,
+.djs-element[class*="SubProcess"].highlight-subprocess .djs-visual > rect {
+  fill: rgba(152, 233, 221, 0.15) !important;
+  stroke: #000000 !important;
+  stroke-width: 2px !important;
+}
+
+/* ===== 9. CONNECTIONS (Sequence Flow & Message Flow) ===== */
+/* Sequence Flow */
 .djs-connection.highlight-path .djs-visual > path,
 .djs-connection.highlight-path .djs-visual > polyline {
-  stroke: #000 !important; stroke-width: 3px !important;
+  stroke: #000000 !important;
+  stroke-width: 3px !important;
 }
-/* message flow dashed */
-.djs-connection.type-bpmn\\:MessageFlow.highlight-path .djs-visual > path {
-  stroke: #000 !important;
+
+/* Message Flow (dashed) */
+.djs-connection.highlight-path[class*="MessageFlow"] .djs-visual > path,
+.djs-connection.type-bpmn\:MessageFlow.highlight-path .djs-visual > path {
+  stroke: #000000 !important;
   stroke-width: 2px !important;
   stroke-dasharray: 8, 4 !important;
 }
 
-/* extra: specific flavors */
-.djs-element.highlight-path[data-element-id*="TimerEvent"] .djs-visual > circle { fill: #FFD580 !important; }
-.djs-element.highlight-path[data-element-id*="SignalEvent"] .djs-visual > circle { fill: #A5D6A7 !important; }
-.djs-element.highlight-path[data-element-id*="ErrorEvent"]  .djs-visual > circle { fill: #FF8A80 !important; }
-.djs-element.highlight-path[data-element-id*="CallActivity"] .djs-visual > rect { fill: #B3E5FC !important; }
-
-/* Visibility */
-.djs-element.highlight-path .djs-visual,
-.djs-element.highlight-subprocess .djs-visual { opacity: 1 !important; visibility: visible !important; }
-
-
- /* Timer Event */
+/* ===== 10. SPECIAL EVENT TYPES ===== */
+/* Timer Event - Orange */
 .djs-element.highlight-path[data-element-id*="TimerEvent"] .djs-visual > circle {
-  fill: #FFD580 !important; /* orange */
-  stroke: #000 !important;
+  fill: #FFD580 !important;
+  stroke: #000000 !important;
+  stroke-width: 2 !important;
 }
 
-/* Signal Event */
+/* Signal Event - Light Green */
 .djs-element.highlight-path[data-element-id*="SignalEvent"] .djs-visual > circle {
-  fill: #A5D6A7 !important; /* hijau muda */
-  stroke: #000 !important;
+  fill: #A5D6A7 !important;
+  stroke: #000000 !important;
+  stroke-width: 2 !important;
 }
 
-/* Error Event */
+/* Error Event - Light Red */
 .djs-element.highlight-path[data-element-id*="ErrorEvent"] .djs-visual > circle {
-  fill: #FF8A80 !important; /* merah muda */
-  stroke: #000 !important;
+  fill: #FF8A80 !important;
+  stroke: #000000 !important;
+  stroke-width: 2 !important;
 }
 
-/* Call Activity */
-.djs-element.highlight-path[data-element-id*="CallActivity"] .djs-visual > rect {
-  fill: #B3E5FC !important; /* biru muda */
-  stroke: #000 !important;
+/* Conditional Event - Light Yellow */
+.djs-element.highlight-path[data-element-id*="ConditionalEvent"] .djs-visual > circle {
+  fill: #FFF59D !important;
+  stroke: #000000 !important;
+  stroke-width: 2 !important;
 }
 
+/* Message Event - Light Blue */
+.djs-element.highlight-path[data-element-id*="MessageEvent"] .djs-visual > circle {
+  fill: #81D4FA !important;
+  stroke: #000000 !important;
+  stroke-width: 2 !important;
+}
 
+/* ===== 11. CALL ACTIVITY - Light Blue ===== */
+.djs-element.highlight-path[data-element-id*="CallActivity"] .djs-visual > rect,
+.djs-element.highlight-path[class*="CallActivity"] .djs-visual > rect {
+  fill: #B3E5FC !important;
+  stroke: #000000 !important;
+  stroke-width: 2 !important;
+}
 
+/* ===== 12. DATA OBJECTS & ANNOTATIONS ===== */
+.djs-element.highlight-path[class*="DataObject"] .djs-visual > path,
+.djs-element.highlight-path[class*="DataStore"] .djs-visual > path {
+  fill: #E0E0E0 !important;
+  stroke: #000000 !important;
+  stroke-width: 2 !important;
+}
 
+.djs-element.highlight-path[class*="TextAnnotation"] .djs-visual > path {
+  stroke: #000000 !important;
+  stroke-width: 1.5 !important;
+  fill: #FFFACD !important;
+}
+
+/* ===== 13. VISIBILITY & OPACITY ===== */
+.djs-element.highlight-path .djs-visual,
+.djs-element.highlight-subprocess .djs-visual {
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+/* SubProcess tidak menghalangi pointer events */
+.djs-element[data-element-id*="SubProcess"] .djs-visual,
+.djs-element[class*="SubProcess"] .djs-visual {
+  pointer-events: none;
+}
+
+/* ===== 14. FALLBACK STYLES ===== */
+/* Jika ada element yang belum ter-cover, gunakan warna default */
+.djs-element.highlight-path .djs-visual > circle {
+  fill: #98E9DD !important;
+  stroke: #000000 !important;
+  stroke-width: 2 !important;
+}
+
+.djs-element.highlight-path .djs-visual > rect {
+  fill: #FFFFBD !important;
+  stroke: #000000 !important;
+  stroke-width: 2 !important;
+}
+
+.djs-element.highlight-path .djs-visual > polygon {
+  fill: #E0E0E0 !important;
+  stroke: #000000 !important;
+  stroke-width: 2 !important;
+}
+
+/* ===== 15. ANIMATION (Optional) ===== */
+/* Uncomment untuk menambahkan animasi pulse pada highlighted elements */
+/*
+@keyframes highlight-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.85; }
+}
+
+.djs-element.highlight-path .djs-visual,
+.djs-connection.highlight-path .djs-visual {
+  animation: highlight-pulse 2s ease-in-out infinite;
+}
+*/
+
+/* ===== 16. PRINT STYLES ===== */
+@media print {
+  .djs-element.highlight-path .djs-visual,
+  .djs-connection.highlight-path .djs-visual {
+    animation: none !important;
+  }
+}
       `}</style>
     </div>
   );
