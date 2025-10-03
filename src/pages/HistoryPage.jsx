@@ -182,9 +182,9 @@ const handleDelete = async () => {
                 <Link to="/" className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-blue-600 transition-colors rounded-md hover:bg-gray-50">
                   Upload BPMN
                 </Link>
-                <Link to="/scenario" className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-blue-600 transition-colors rounded-md hover:bg-gray-50">
-                  Alur Skenario
-                </Link>
+                {/* <Link to="/scenario" className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-blue-600 transition-colors rounded-md hover:bg-gray-50">
+Flow Test                
+</Link> */}
                 <div className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md">
                   History BPMN
                 </div>
