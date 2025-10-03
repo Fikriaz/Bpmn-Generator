@@ -1,7 +1,6 @@
-// src/pages/ScenarioPage.jsx
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -13,13 +12,6 @@ import {
   AlertCircle
 } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-
-// ===== W A J I B  (asset bpmn-js) =====
-import "bpmn-js/dist/assets/diagram-js.css";
-import "bpmn-js/dist/assets/bpmn-font/css/bpmn.css";
-import "bpmn-js/dist/assets/bpmn-font/css/bpmn-codes.css";
-import "bpmn-js/dist/assets/bpmn-font/css/bpmn-embedded.css";
-
 import Button from "../components/ui/Button";
 import UserMenu from "../components/ui/UserMenu";
 import DownloadPopup from "../components/DownloadPopup";
@@ -31,13 +23,59 @@ import {
   TableHeader,
   TableRow
 } from "../components/ui/Table";
-
-import BpmnViewer from "bpmn-js/lib/NavigatedViewer";
 import { API_BASE, authFetch } from "../utils/auth";
 
+// CSS bawaan bpmn-js WAJIB di-load di halaman yang render viewer
+import "bpmn-js/dist/assets/diagram-js.css";
+import "bpmn-js/dist/assets/bpmn-font/css/bpmn.css";
+import "bpmn-js/dist/assets/bpmn-font/css/bpmn-codes.css";
+import "bpmn-js/dist/assets/bpmn-font/css/bpmn-embedded.css";
+
+// biar aman di prod/hosting, bpmn-js dipakai via dynamic import
+let BpmnViewerLocal = null;
+
 export default function ScenarioPage() {
-  const containerRef = useRef(null);
+  /* ===== Refs & State Utama ===== */
   const viewerRef = useRef(null);
+
+  // callback ref: supaya kita tahu kapan container DOM sudah ada
+  const containerRef = useRef(null);
+  const [containerReady, setContainerReady] = useState(false);
+  const setContainer = (el) => {
+    containerRef.current = el;
+    setContainerReady(!!el);
+  };
+
+  // pastikan container sudah punya ukuran > 0 (kadang 0 kalau parent hidden)
+  const [containerSized, setContainerSized] = useState(false);
+  useLayoutEffect(() => {
+    if (!containerReady) return;
+    const el = containerRef.current;
+    const check = () => {
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) setContainerSized(true);
+    };
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [containerReady]);
+
+  const [bpmnReady, setBpmnReady] = useState(false);
+  useEffect(() => {
+    (async () => {
+      try {
+        const M = await import("bpmn-js/lib/NavigatedViewer");
+        BpmnViewerLocal = M.default;
+      } catch {
+        const M = await import("bpmn-js");
+        BpmnViewerLocal = M.default;
+      }
+      setBpmnReady(true);
+    })();
+  }, []);
+
   const overlayIdsRef = useRef([]);
   const elementMappingRef = useRef({});
 
@@ -46,6 +84,7 @@ export default function ScenarioPage() {
 
   const [data, setData] = useState(null);
   const [currentPathIndex, setCurrentPathIndex] = useState(0);
+  const [elementNames, setElementNames] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [downloading, setDownloading] = useState(false);
@@ -67,12 +106,14 @@ export default function ScenarioPage() {
 
   const scenarios = useMemo(() => getScenarios(data), [data]);
 
-  /* ======================= INIT ======================= */
+  /* ===== Fetch BPMN File ===== */
   useEffect(() => {
     if (!fileId) {
       navigate("/");
       return;
     }
+
+    let cancelled = false;
 
     const fetchData = async () => {
       try {
@@ -87,61 +128,99 @@ export default function ScenarioPage() {
         if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
 
         const json = await res.json();
-        setData(json);
-
-        // pastikan container siap
-        if (!containerRef.current) throw new Error("Container not ready");
-
-        const viewer = new BpmnViewer({ container: containerRef.current });
-        viewerRef.current = viewer;
-
-        await viewer.importXML(json.bpmnXml);
-
-        buildElementMapping(viewer, json);
-        const canvas = viewer.get("canvas");
-        const bus = viewer.get("eventBus");
-        canvas.zoom("fit-viewport");
-
-        bus.on("import.render.complete", fixTextStyling);
-        bus.on("import.done", fixTextStyling);
-
-        const list = getScenarios(json);
-        if (list.length > 0) {
-          const actualIds = convertToActualIds(list[0]?.rawPath || []);
-          highlightPath(actualIds);
-        }
+        if (!cancelled) setData(json);
       } catch (err) {
-        console.error("Error in fetchData:", err);
-        setError(err.message);
+        if (!cancelled) setError(err.message);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
 
     fetchData();
-
     return () => {
-      if (viewerRef.current) viewerRef.current.destroy();
+      cancelled = true;
     };
   }, [fileId, navigate]);
 
+  /* ===== Init Viewer setelah SEMUA siap ===== */
   useEffect(() => {
-    if (scenarios.length && viewerRef.current) {
-      const actualIds = convertToActualIds(scenarios[currentPathIndex]?.rawPath || []);
-      highlightPath(actualIds);
-    }
+    if (!bpmnReady || !containerSized || !data?.bpmnXml) return;
+
+    // bersihkan viewer lama (StrictMode bisa double mount)
+    try {
+      viewerRef.current?.destroy();
+    } catch {}
+
+    const init = async () => {
+      const viewer = new BpmnViewerLocal({
+        container: containerRef.current,
+        width: "100%",
+        height: "520px"
+      });
+      viewerRef.current = viewer;
+
+      await viewer.importXML(data.bpmnXml);
+
+      buildElementMapping(viewer, data);
+      extractElementNames(viewer);
+
+      const canvas = viewer.get("canvas");
+      const bus = viewer.get("eventBus");
+
+      const fit = () => {
+        try {
+          canvas.resized();
+          canvas.zoom("fit-viewport");
+          // fit lagi next frame (mengatasi first paint 0-size)
+          requestAnimationFrame(() => {
+            canvas.resized();
+            canvas.zoom("fit-viewport");
+          });
+        } catch {}
+      };
+
+      fit();
+      bus.on("import.done", fit);
+      bus.on("import.render.complete", () => {
+        fixTextStyling();
+          forceApplyHighlightColors(); // ⭐ Tambahkan ini
+
+        fit();
+      });
+
+      // highlight path pertama bila ada
+      const list = getScenarios(data);
+      if (list.length > 0) {
+        const actualIds = convertToActualIds(list[0]?.rawPath || []);
+        highlightPath(actualIds);
+      }
+    };
+
+    init();
+
+    return () => {
+      try {
+        viewerRef.current?.destroy();
+      } catch {}
+    };
+  }, [bpmnReady, containerSized, data]);
+
+  /* ===== React ke pergantian path ===== */
+  useEffect(() => {
+    if (!scenarios.length || !viewerRef.current) return;
+    const actualIds = convertToActualIds(scenarios[currentPathIndex]?.rawPath || []);
+    highlightPath(actualIds);
   }, [currentPathIndex, scenarios.length]);
 
-  /* ======================= HELPERS ======================= */
+  /* ===== Helpers BPMN ===== */
 
-  const buildElementMapping = (viewer, data) => {
+  const buildElementMapping = (viewer, d) => {
     const registry = viewer.get("elementRegistry");
     const elements = registry.getAll();
     const mapping = {};
 
-    // server-provided
-    if (data.elementsJson && Array.isArray(data.elementsJson)) {
-      data.elementsJson.forEach((elem) => {
+    if (d.elementsJson && Array.isArray(d.elementsJson)) {
+      d.elementsJson.forEach((elem) => {
         if (elem?.id) {
           if (elem.lane && elem.name) {
             mapping[`[${elem.lane}] ${elem.name}`] = elem.id;
@@ -154,14 +233,15 @@ export default function ScenarioPage() {
       });
     }
 
-    // derive from model
     elements.forEach((el) => {
       const bo = el.businessObject;
-      if (bo?.name) {
+      if (bo && bo.name) {
         mapping[bo.name] = el.id;
-        if (el.parent?.type === "bpmn:SubProcess") {
+
+        if (el.parent && el.parent.type === "bpmn:SubProcess") {
           mapping[`[System] ${bo.name}`] = el.id;
         }
+
         const laneName = findElementLaneName(el, elements);
         if (laneName) {
           mapping[`[${laneName}] ${bo.name}`] = el.id;
@@ -172,8 +252,8 @@ export default function ScenarioPage() {
     elementMappingRef.current = mapping;
   };
 
-  const findElementLaneName = (element, all) => {
-    const lanes = all.filter((el) => el.type === "bpmn:Lane");
+  const findElementLaneName = (element, allElements) => {
+    const lanes = allElements.filter((el) => el.type === "bpmn:Lane");
     for (const lane of lanes) {
       const flowNodes = lane?.businessObject?.flowNodeRef || [];
       const isInLane = flowNodes.some(
@@ -187,11 +267,25 @@ export default function ScenarioPage() {
   const convertToActualIds = (displayNames) => {
     const mapping = elementMappingRef.current;
     return (displayNames || [])
-      .map((dn) => {
-        let id = mapping[dn];
-        if (!id && /\[.*?\]\s+/.test(dn)) id = mapping[dn.replace(/^\[.*?\]\s*/, "")];
-        if (!id && dn.startsWith("[System]")) id = mapping[dn.replace(/^\[.*?\]\s*/, "")];
-        return id || dn; // biarin (biar ketauan kalau gak ketemu)
+      .map((displayName) => {
+        let actualId = mapping[displayName];
+
+        // hapus prefix [Lane] atau [System]
+        if (!actualId && /\[.*?\]\s+/.test(displayName)) {
+          const withoutBracket = displayName.replace(/^\[.*?\]\s*/, "");
+          actualId = mapping[withoutBracket];
+        }
+
+        if (!actualId && displayName.startsWith("[System]")) {
+          const clean = displayName.replace(/^\[.*?\]\s*/, "");
+          actualId = mapping[clean];
+        }
+
+        if (!actualId) {
+          console.warn(`No mapping found for display name: ${displayName}`);
+          return displayName; // biarin, nanti di-filter
+        }
+        return actualId;
       })
       .filter(Boolean);
   };
@@ -226,14 +320,25 @@ export default function ScenarioPage() {
     });
   };
 
+  const extractElementNames = (viewer) => {
+    const registry = viewer.get("elementRegistry");
+    const elements = registry.getAll();
+    const nameMap = {};
+    elements.forEach((el) => {
+      const bo = el.businessObject;
+      nameMap[el.id] = (bo && (bo.name || bo.id)) || el.id;
+    });
+    setElementNames(nameMap);
+  };
+
   const findFlowIdsBetween = (fromId, toId) => {
     const viewer = viewerRef.current;
     if (!viewer) return [];
     const reg = viewer.get("elementRegistry");
     const from = reg.get(fromId);
-    if (!from?.outgoing) return [];
+    if (!from || !from.outgoing) return [];
     return from.outgoing
-      .filter((f) => f?.target?.id === toId)
+      .filter((f) => f && f.target && f.target.id === toId)
       .map((f) => f.id);
   };
 
@@ -260,81 +365,132 @@ export default function ScenarioPage() {
     } catch {}
     overlayIdsRef.current = [];
 
-    document.querySelectorAll(".bpmn-highlight-style").forEach((s) => s.remove());
+    const customStyles = document.querySelectorAll(".bpmn-highlight-style");
+    customStyles.forEach((style) => style.remove());
   };
-
-  // ===== include Start/End/Intermediate Events otomatis
-  const includeBoundaryEvents = (ids) => {
-    const viewer = viewerRef.current;
-    if (!viewer || !ids.length) return ids;
-
-    const reg = viewer.get("elementRegistry");
-    const list = [...ids];
-
-    const addIfEvent = (el, where = "end") => {
-      if (!el) return;
-      const t = el.type || el.businessObject?.$type || "";
-      if (t.includes("Event")) {
-        if (!list.includes(el.id)) {
-          if (where === "start") list.unshift(el.id);
-          else list.push(el.id);
-        }
-      }
-    };
-
-    const first = reg.get(ids[0]);
-    const last = reg.get(ids[ids.length - 1]);
-
-    // cari Start (source dari incoming ke first)
-    first?.incoming?.forEach((seq) => addIfEvent(seq?.source, "start"));
-    // cari End (target dari outgoing last)
-    last?.outgoing?.forEach((seq) => addIfEvent(seq?.target, "end"));
-
-    return list;
-  };
+const forceApplyHighlightColors = () => {
+  const viewer = viewerRef.current;
+  if (!viewer) return;
+  
+  const canvas = viewer.get("canvas");
+  const registry = viewer.get("elementRegistry");
+  
+  // Get all highlighted elements
+  const highlightedElements = registry.filter((el) => {
+    return canvas.hasMarker(el.id, "highlight-path") || 
+           canvas.hasMarker(el.id, "highlight-subprocess");
+  });
+  
+  highlightedElements.forEach((element) => {
+    const gfx = canvas.getGraphics(element);
+    if (!gfx) return;
+    
+    const type = element.type;
+    let fillColor, strokeColor;
+    
+    // Determine colors based on element type
+    if (type.includes("StartEvent") || type.includes("EndEvent") || 
+        type.includes("IntermediateEvent") || type.includes("BoundaryEvent")) {
+      fillColor = "#98E9DD"; // Cyan for events
+      strokeColor = "#000000";
+    } else if (type.includes("MessageTask") || type.includes("ReceiveTask") || 
+               type.includes("SendTask")) {
+      fillColor = "#96DF67"; // Green for message tasks
+      strokeColor = "#000000";
+    } else if (type.includes("Gateway")) {
+      fillColor = "#E0E0E0"; // Gray for gateways
+      strokeColor = "#000000";
+    } else if (type.includes("Task") || type.includes("Activity")) {
+      fillColor = "#FFFFBD"; // Yellow for tasks
+      strokeColor = "#000000";
+    } else if (type.includes("SubProcess")) {
+      fillColor = "rgba(152, 233, 221, 0.3)"; // Light cyan for subprocess
+      strokeColor = "#000000";
+    }
+    
+    if (fillColor) {
+      // Apply to all shapes (circle, rect, polygon, path)
+      const shapes = gfx.querySelectorAll("circle, rect, polygon, path");
+      shapes.forEach((shape) => {
+        shape.style.fill = fillColor;
+        shape.style.stroke = strokeColor;
+        shape.style.strokeWidth = "2px";
+      });
+    }
+  });
+  
+  // Also highlight connections
+  const connections = registry.filter((el) => el.waypoints && canvas.hasMarker(el.id, "highlight-path"));
+  connections.forEach((conn) => {
+    const gfx = canvas.getGraphics(conn);
+    if (!gfx) return;
+    
+    const paths = gfx.querySelectorAll("path, polyline");
+    paths.forEach((path) => {
+      path.style.stroke = "#000000";
+      path.style.strokeWidth = "3px";
+    });
+  });
+};
 
   const highlightPath = (actualIds) => {
     const viewer = viewerRef.current;
-    if (!viewer || !Array.isArray(actualIds) || !actualIds.length) return;
+    if (!viewer || !Array.isArray(actualIds) || actualIds.length === 0) {
+      console.warn("Invalid path for highlighting:", actualIds);
+      return;
+    }
 
     clearHighlights();
 
     const canvas = viewer.get("canvas");
     const reg = viewer.get("elementRegistry");
 
-    const idsWithEvents = includeBoundaryEvents(actualIds);
-
-    const valid = idsWithEvents
+    const validElements = actualIds
       .map((id) => {
         const element = reg.get(id);
-        if (!element) return null;
+        if (!element) {
+          console.warn(`Element not found: ${id}`);
+          return null;
+        }
         return {
           id,
           element,
-          isSub: element.parent && element.parent.type === "bpmn:SubProcess"
+          isSubprocessElement: element.parent && element.parent.type === "bpmn:SubProcess"
         };
       })
       .filter(Boolean);
 
-    valid.forEach(({ id, element, isSub }) => {
-      canvas.addMarker(id, isSub ? "highlight-subprocess" : "highlight-path");
+    if (validElements.length === 0) {
+      canvas.zoom("fit-viewport");
+      return;
+    }
+
+    validElements.forEach(({ id, element, isSubprocessElement }) => {
+      canvas.addMarker(id, isSubprocessElement ? "highlight-subprocess" : "highlight-path");
       canvas.addMarker(id, typeClassFor(element));
     });
 
-    for (let i = 0; i < valid.length - 1; i++) {
-      const flowIds = findFlowIdsBetween(valid[i].id, valid[i + 1].id);
+    for (let i = 0; i < validElements.length - 1; i++) {
+      const fromId = validElements[i].id;
+      const toId = validElements[i + 1].id;
+      const flowIds = findFlowIdsBetween(fromId, toId);
       flowIds.forEach((fid) => {
         canvas.addMarker(fid, "highlight-path");
         canvas.addMarker(fid, "type-seq");
       });
     }
 
+    canvas.resized();
     canvas.zoom("fit-viewport");
-    setTimeout(fixTextStyling, 80);
+    setTimeout(() => {
+      fixTextStyling();
+      forceApplyHighlightColors(); // Tambahkan ini
+      canvas.resized();
+      canvas.zoom("fit-viewport");
+    }, 50);
   };
 
-  /* ======================= UI ======================= */
-
+  /* ===== UI Events ===== */
   const handlePrev = () => {
     if (!scenarios.length) return;
     setCurrentPathIndex((i) => (i === 0 ? scenarios.length - 1 : i - 1));
@@ -353,7 +509,7 @@ export default function ScenarioPage() {
 
   const getReadableScenarioPath = (pathArray) => {
     if (!Array.isArray(pathArray)) return "-";
-    return pathArray.map((s) => s.replace(/^\[.*?\]\s*/, "")).join(" → ");
+    return pathArray.map((displayName) => displayName.replace(/^\[.*?\]\s*/, "")).join(" → ");
   };
 
   const getStatusDisplay = (scenario) => {
@@ -376,6 +532,16 @@ export default function ScenarioPage() {
     setTimeout(fixTextStyling, 50);
   };
 
+  const getActionSteps = (scenarioStep) => {
+    if (!scenarioStep) return [];
+    return scenarioStep
+      .split("\n")
+      .map((s) => s.trim())
+      .filter((s) => s.match(/^\d+\.\s+/) || s.startsWith("->"))
+      .map((s) => s.replace(/^\d+\.\s*/, "").replace(/^->\s*/, "").trim())
+      .filter((s) => s.length > 0);
+  };
+
   const handleDownloadAllScenarios = () => {
     setDownloadMode("all");
     setSelectedScenarioForDownload(null);
@@ -388,19 +554,8 @@ export default function ScenarioPage() {
     setShowDownloadPopup(true);
   };
 
-  const getActionSteps = (scenarioStep) => {
-    if (!scenarioStep) return [];
-    return scenarioStep
-      .split("\n")
-      .map((s) => s.trim())
-      .filter((s) => s.match(/^\d+\.\s+/) || s.startsWith("->"))
-      .map((s) => s.replace(/^\d+\.\s*/, "").replace(/^->\s*/, "").trim())
-      .filter(Boolean);
-  };
-
   const handleDownload = async (downloadOptions) => {
     const { format, includeTesterName, testerName } = downloadOptions;
-
     try {
       setDownloading(true);
 
@@ -459,9 +614,9 @@ export default function ScenarioPage() {
                     return {
                       id: `${key}_${index}`,
                       index,
-                      properties: Object.entries(item).map(([k, v]) => ({
-                        key: k,
-                        value: String(v)
+                      properties: Object.entries(item).map(([subKey, subValue]) => ({
+                        key: subKey,
+                        value: String(subValue)
                       }))
                     };
                   }
@@ -469,9 +624,9 @@ export default function ScenarioPage() {
                 });
                 processedTestData.push({ id: key, label: cleanKey, value: arrayItems, type: "array" });
               } else {
-                const objectItems = Object.entries(value).map(([k, v]) => ({
-                  key: k,
-                  value: String(v)
+                const objectItems = Object.entries(value).map(([subKey, subValue]) => ({
+                  key: subKey,
+                  value: String(subValue)
                 }));
                 processedTestData.push({ id: key, label: cleanKey, value: objectItems, type: "object" });
               }
@@ -530,7 +685,7 @@ export default function ScenarioPage() {
     }
   };
 
-  /* ======================= RENDER ======================= */
+  /* ===== Render ===== */
 
   if (loading) {
     return (
@@ -612,7 +767,8 @@ export default function ScenarioPage() {
             </div>
           </div>
           <div className="p-6">
-            <div ref={containerRef} className="w-full h-[520px] rounded-lg border border-gray-200 overflow-hidden bg-gray-50" />
+            {/* gunakan callback ref */}
+            <div ref={setContainer} className="w-full h-[520px] rounded-lg border border-gray-200 overflow-hidden bg-gray-50" />
           </div>
         </div>
 
@@ -689,7 +845,7 @@ export default function ScenarioPage() {
           </Button>
         </div>
 
-        {/* Table */}
+        {/* Scenario Table */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
           <div className="p-6 border-b border-gray-100">
             <div className="flex items-center justify-between">
@@ -807,110 +963,213 @@ export default function ScenarioPage() {
         fileId={fileId}
       />
 
-      {/* ====== H I G H L I G H T  S T Y L E ====== */}
-      <style>{`
-.djs-container{width:100%!important;height:100%!important}
+  <style>{`
+.djs-container { width: 100% !important; height: 100% !important; }
+  /* ===== Z-INDEX HIERARCHY (PALING PENTING) ===== */
+  /* Lane dan Participant harus di bawah */
+  .djs-element[data-element-id*="Lane"],
+  .djs-element[data-element-id*="Participant"],
+  .djs-element[class*="Lane"],
+  .djs-element[class*="Participant"] {
+    z-index: 1 !important;
+  }
 
-/* LAYERING */
-.djs-element[data-element-id*="Lane"],
-.djs-element[data-element-id*="Participant"],
-.djs-element[class*="Lane"],
-.djs-element[class*="Participant"]{z-index:1!important}
-.djs-element[data-element-id*="Task"],
-.djs-element[data-element-id*="Activity"],
-.djs-element[data-element-id*="Event"],
-.djs-element[data-element-id*="Gateway"],
-.djs-element[class*="Task"],
-.djs-element[class*="Activity"],
-.djs-element[class*="Event"],
-.djs-element[class*="Gateway"]{z-index:10!important}
-.djs-element.highlight-path,
-.djs-element.highlight-subprocess{z-index:10000!important;position:relative}
-.djs-connection.highlight-path{z-index:9999!important}
+  /* Element biasa di layer tengah */
+  .djs-element[data-element-id*="Task"],
+  .djs-element[data-element-id*="Activity"],
+  .djs-element[data-element-id*="Event"],
+  .djs-element[data-element-id*="Gateway"],
+  .djs-element[class*="Task"],
+  .djs-element[class*="Activity"],
+  .djs-element[class*="Event"],
+  .djs-element[class*="Gateway"] {
+    z-index: 10 !important;
+  }
 
-/* TEXT RESET */
-.djs-label text,.djs-visual text{
-  stroke:none!important;stroke-width:0!important;paint-order:normal!important;
-  font-weight:normal!important;fill:black!important;font-family:Arial, sans-serif!important;font-size:12px!important
-}
+  /* Highlighted elements HARUS di atas semua */
+  .djs-element.highlight-path,
+  .djs-element.highlight-subprocess {
+    z-index: 10000 !important;
+    position: relative;
+  }
 
-/* EVENTS (tosca) */
-.djs-element.highlight-path[data-element-id*="Event"] .djs-visual > circle,
-.djs-element.highlight-path[class*="Event"] .djs-visual > circle{
-  fill:#98E9DD!important;stroke:#000!important;stroke-width:2!important
-}
+  /* Connection highlights juga di atas */
+  .djs-connection.highlight-path {
+    z-index: 9999 !important;
+  }
 
-/* TASKS (kuning) */
-.djs-element.highlight-path[data-element-id*="Task"] .djs-visual > rect,
-.djs-element.highlight-path[data-element-id*="Activity_"] .djs-visual > rect,
-.djs-element.highlight-path[class*="Task"] .djs-visual > rect,
-.djs-element.highlight-path[class*="Activity"] .djs-visual > rect{
-  fill:#FFFFBD!important;stroke:#000!important;stroke-width:2!important
-}
+  /* ===== TEXT RESET ===== */
+  .djs-label text, 
+  .djs-visual text {
+    stroke: none !important;
+    stroke-width: 0 !important;
+    paint-order: normal !important;
+    font-weight: normal !important;
+    fill: black !important;
+    font-family: Arial, sans-serif !important;
+    font-size: 12px !important;
+  }
 
-/* MESSAGE/RECEIVE/SEND TASK (hijau muda) */
-.djs-element.highlight-path[data-element-id*="MessageTask"] .djs-visual > rect,
-.djs-element.highlight-path[data-element-id*="ReceiveTask"] .djs-visual > rect,
-.djs-element.highlight-path[data-element-id*="SendTask"] .djs-visual > rect,
-.djs-element.highlight-path[class*="MessageTask"] .djs-visual > rect,
-.djs-element.highlight-path[class*="ReceiveTask"] .djs-visual > rect,
-.djs-element.highlight-path[class*="SendTask"] .djs-visual > rect{
-  fill:#96DF67!important;stroke:#000!important;stroke-width:2!important
-}
+  /* ===== EVENTS - #98E9DD (Cyan tosca) ===== */
+  .djs-element.highlight-path[data-element-id*="StartEvent"] .djs-visual > circle,
+  .djs-element.highlight-path[data-element-id*="EndEvent"] .djs-visual > circle,
+  .djs-element.highlight-path[data-element-id*="Event_"] .djs-visual > circle,
+  .djs-element.highlight-path[data-element-id*="IntermediateCatchEvent"] .djs-visual > circle,
+  .djs-element.highlight-path[data-element-id*="IntermediateThrowEvent"] .djs-visual > circle,
+  .djs-element.highlight-path[data-element-id*="BoundaryEvent"] .djs-visual > circle,
+  .djs-element.highlight-path[class*="StartEvent"] .djs-visual > circle,
+  .djs-element.highlight-path[class*="EndEvent"] .djs-visual > circle,
+  .djs-element.highlight-path[class*="IntermediateEvent"] .djs-visual > circle,
+  .djs-element.highlight-path[class*="BoundaryEvent"] .djs-visual > circle {
+    fill: #98E9DD !important;
+    stroke: #000000 !important;
+    stroke-width: 2 !important;
+  }
 
-/* GATEWAY (abu) – tangkap polygon & PATH */
-.djs-element.highlight-path[data-element-id*="Gateway"] .djs-visual > polygon,
-.djs-element.highlight-path[class*="Gateway"] .djs-visual > polygon,
-.djs-element.highlight-path[data-element-id*="Gateway"] .djs-visual > path,
-.djs-element.highlight-path[class*="Gateway"] .djs-visual > path{
-  fill:#E0E0E0!important;stroke:#000!important;stroke-width:2!important
-}
+  /* ===== TASKS - #FFFFBD (Yellow) ===== */
+  .djs-element.highlight-path[data-element-id*="Task"] .djs-visual > rect,
+  .djs-element.highlight-path[data-element-id*="Activity_"] .djs-visual > rect,
+  .djs-element.highlight-path[data-element-id*="UserTask"] .djs-visual > rect,
+  .djs-element.highlight-path[data-element-id*="ServiceTask"] .djs-visual > rect,
+  .djs-element.highlight-path[data-element-id*="ManualTask"] .djs-visual > rect,
+  .djs-element.highlight-path[data-element-id*="ScriptTask"] .djs-visual > rect,
+  .djs-element.highlight-path[data-element-id*="BusinessRuleTask"] .djs-visual > rect,
+  .djs-element.highlight-path[class*="Task"] .djs-visual > rect,
+  .djs-element.highlight-path[class*="Activity"] .djs-visual > rect,
+  .djs-element.highlight-path[class*="UserTask"] .djs-visual > rect,
+  .djs-element.highlight-path[class*="ServiceTask"] .djs-visual > rect {
+    fill: #FFFFBD !important;
+    stroke: #000000 !important;
+    stroke-width: 2 !important;
+  }
 
-/* SUBPROCESS */
-.djs-element.highlight-subprocess .djs-visual > rect,
-.djs-element.highlight-subprocess .djs-visual > circle,
-.djs-element.highlight-subprocess .djs-visual > polygon,
-.djs-element.highlight-subprocess .djs-visual > path{
-  fill:rgba(152,233,221,0.3)!important;stroke:#000!important;stroke-width:2!important
-}
-.djs-element[data-element-id*="SubProcess"] .djs-visual > rect,
-.djs-element[class*="SubProcess"] .djs-visual > rect{
-  fill:rgba(255,255,255,0.8)!important;stroke:#ddd!important;stroke-width:1px!important
-}
-.djs-element[data-element-id*="SubProcess"].highlight-subprocess .djs-visual > rect,
-.djs-element[class*="SubProcess"].highlight-subprocess .djs-visual > rect{
-  fill:rgba(152,233,221,0.15)!important;stroke:#000!important;stroke-width:2px!important
-}
+  /* ===== MESSAGE/RECEIVE TASK - #96DF67 (Light green) ===== */
+  .djs-element.highlight-path[data-element-id*="MessageTask"] .djs-visual > rect,
+  .djs-element.highlight-path[data-element-id*="ReceiveTask"] .djs-visual > rect,
+  .djs-element.highlight-path[data-element-id*="SendTask"] .djs-visual > rect,
+  .djs-element.highlight-path[class*="MessageTask"] .djs-visual > rect,
+  .djs-element.highlight-path[class*="ReceiveTask"] .djs-visual > rect,
+  .djs-element.highlight-path[class*="SendTask"] .djs-visual > rect {
+    fill: #96DF67 !important;
+    stroke: #000000 !important;
+    stroke-width: 2 !important;
+  }
 
-/* CONNECTIONS */
-.djs-connection.highlight-path .djs-visual > path,
-.djs-connection.highlight-path .djs-visual > polyline{
-  stroke:#000!important;stroke-width:3px!important
-}
-.djs-connection.highlight-path[class*="MessageFlow"] .djs-visual > path{
-  stroke:#000!important;stroke-width:2px!important;stroke-dasharray:8,4!important
-}
+  /* ===== GATEWAYS - #E0E0E0 (Light gray) ===== */
+  
+  /* ===== GATEWAYS - #E0E0E0 ===== */
+.djs-element.highlight-path[data-element-id*="Gateway"] .djs-visual > circle,
+.djs-element.highlight-path[class*="Gateway"] .djs-visual > circle,
+  .djs-element.highlight-path[data-element-id*="Gateway"] .djs-visual > polygon,
+  .djs-element.highlight-path[class*="Gateway"] .djs-visual > polygon,
+  .djs-element.highlight-path[class*="ExclusiveGateway"] .djs-visual > polygon,
+  .djs-element.highlight-path[class*="ParallelGateway"] .djs-visual > polygon,
+  .djs-element.highlight-path[class*="InclusiveGateway"] .djs-visual > polygon {
+    fill: #E0E0E0 !important;
+    stroke: #000000 !important;
+    stroke-width: 2 !important;
+  }
+  .djs-element.highlight-path[data-element-id*="Gateway"] .djs-visual > polygon,
+  .djs-element.highlight-path[class*="Gateway"] .djs-visual > polygon,
+  .djs-element.highlight-path[class*="ExclusiveGateway"] .djs-visual > polygon,
+  .djs-element.highlight-path[class*="ParallelGateway"] .djs-visual > polygon,
+  .djs-element.highlight-path[class*="InclusiveGateway"] .djs-visual > polygon {
+    fill: #E0E0E0 !important;
+    stroke: #000000 !important;
+    stroke-width: 2 !important;
+  }
 
-/* FALLBACK umum */
-.djs-element.highlight-path .djs-visual > rect{fill:#FFFFBD!important;stroke:#000!important;stroke-width:2!important}
-.djs-element.highlight-path .djs-visual > circle{fill:#98E9DD!important;stroke:#000!important;stroke-width:2!important}
-.djs-element.highlight-path .djs-visual > polygon{fill:#E0E0E0!important;stroke:#000!important;stroke-width:2!important}
-/* tambahan: banyak shape yg <path> */
-.djs-element.highlight-path .djs-visual > path{stroke:#000!important;stroke-width:2!important}
+  /* ===== SUBPROCESS - transparent cyan ===== */
+  .djs-element.highlight-subprocess .djs-visual > rect,
+  .djs-element.highlight-subprocess .djs-visual > circle,
+  .djs-element.highlight-subprocess .djs-visual > polygon,
+  .djs-element.highlight-subprocess .djs-visual > path {
+    fill: rgba(152, 233, 221, 0.3) !important;
+    stroke: #000000 !important;
+    stroke-width: 2 !important;
+  }
 
-.djs-element.highlight-path .djs-visual,
-.djs-element.highlight-subprocess .djs-visual{opacity:1!important;visibility:visible!important}
+  /* SubProcess container */
+  .djs-element[data-element-id*="SubProcess"] .djs-visual > rect,
+  .djs-element[class*="SubProcess"] .djs-visual > rect {
+    fill: rgba(255, 255, 255, 0.8) !important;
+    stroke: #ddd !important;
+    stroke-width: 1px !important;
+  }
 
-.djs-element[data-element-id*="SubProcess"] .djs-visual,
-.djs-element[class*="SubProcess"] .djs-visual{pointer-events:none}
+  .djs-element[data-element-id*="SubProcess"].highlight-subprocess .djs-visual > rect,
+  .djs-element[class*="SubProcess"].highlight-subprocess .djs-visual > rect {
+    fill: rgba(152, 233, 221, 0.15) !important;
+    stroke: #000000 !important;
+    stroke-width: 2px !important;
+  }
 
-.djs-element.highlight-path .djs-label text,
-.djs-element.highlight-subprocess .djs-label text{stroke:none!important;font-weight:normal!important;fill:black!important}
+  /* ===== CONNECTIONS ===== */
+  .djs-connection.highlight-path .djs-visual > path,
+  .djs-connection.highlight-path .djs-visual > polyline {
+    stroke: #000000 !important;
+    stroke-width: 3px !important;
+  }
 
-.djs-element.highlight-path[class*="DataObject"] .djs-visual > path,
-.djs-element.highlight-path[class*="DataStore"] .djs-visual > path{fill:#E0E0E0!important;stroke:#000!important;stroke-width:2!important}
-.djs-element.highlight-path[class*="TextAnnotation"] .djs-visual > path{stroke:#000!important;stroke-width:1.5!important}
-      `}</style>
+  .djs-connection.highlight-path[class*="MessageFlow"] .djs-visual > path {
+    stroke: #000000 !important;
+    stroke-width: 2px !important;
+    stroke-dasharray: 8, 4 !important;
+  }
+
+  /* ===== FALLBACK untuk element tanpa ID/class spesifik ===== */
+  .djs-element.highlight-path .djs-visual > circle {
+    fill: #98E9DD !important;
+    stroke: #000000 !important;
+    stroke-width: 2 !important;
+  }
+
+  .djs-element.highlight-path .djs-visual > rect {
+    fill: #FFFFBD !important;
+    stroke: #000000 !important;
+    stroke-width: 2 !important;
+  }
+
+  .djs-element.highlight-path .djs-visual > polygon {
+    fill: #E0E0E0 !important;
+    stroke: #000000 !important;
+    stroke-width: 2 !important;
+  }
+
+  /* ===== VISIBILITY ===== */
+  .djs-element.highlight-path .djs-visual,
+  .djs-element.highlight-subprocess .djs-visual {
+    opacity: 1 !important;
+    visibility: visible !important;
+  }
+
+  /* SubProcess pointer events */
+  .djs-element[data-element-id*="SubProcess"] .djs-visual,
+  .djs-element[class*="SubProcess"] .djs-visual {
+    pointer-events: none;
+  }
+
+  /* ===== TEXT PADA HIGHLIGHTED ELEMENT ===== */
+  .djs-element.highlight-path .djs-label text,
+  .djs-element.highlight-subprocess .djs-label text {
+    stroke: none !important;
+    font-weight: normal !important;
+    fill: black !important;
+  }
+
+  /* ===== DATA OBJECTS & ANNOTATIONS ===== */
+  .djs-element.highlight-path[class*="DataObject"] .djs-visual > path,
+  .djs-element.highlight-path[class*="DataStore"] .djs-visual > path {
+    fill: #E0E0E0 !important;
+    stroke: #000000 !important;
+    stroke-width: 2 !important;
+  }
+
+  .djs-element.highlight-path[class*="TextAnnotation"] .djs-visual > path {
+    stroke: #000000 !important;
+    stroke-width: 1.5 !important;
+  }
+`}</style>
     </div>
   );
 }
