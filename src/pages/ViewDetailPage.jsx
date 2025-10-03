@@ -18,21 +18,7 @@ import UserMenu from "../components/ui/UserMenu";
 import DownloadPopup from "../components/DownloadPopup";
 import { API_BASE, authFetch } from "../utils/auth";
 
-// Import dari utils
-import {
-  buildElementMapping,
-  convertToActualIds,
-  highlightPath,
-  clearAllHighlights
-} from "../utils/bpmnHighlight";
-
-// CSS wajib bpmn-js
-import "bpmn-js/dist/assets/diagram-js.css";
-import "bpmn-js/dist/assets/bpmn-font/css/bpmn.css";
-import "bpmn-js/dist/assets/bpmn-font/css/bpmn-codes.css";
-import "bpmn-js/dist/assets/bpmn-font/css/bpmn-embedded.css";
-
-// Dynamic import viewer
+// Import BPMN viewer
 let BpmnViewer = null;
 
 export default function ViewDetailPage() {
@@ -43,6 +29,7 @@ export default function ViewDetailPage() {
   const viewerRef = useRef(null);
   const elementMappingRef = useRef({});
 
+  // Get parameters
   const scenarioId = searchParams.get("scenarioId");
   const fileId = location.state?.fileId || searchParams.get("fileId");
   const pathIndex = location.state?.pathIndex || 0;
@@ -53,12 +40,16 @@ export default function ViewDetailPage() {
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [elementNames, setElementNames] = useState({});
   const [editingTestData, setEditingTestData] = useState(false);
   const [testDataList, setTestDataList] = useState([]);
   const [originalTestData, setOriginalTestData] = useState([]);
   const [bpmnViewerReady, setBpmnViewerReady] = useState(false);
+
+  // Download popup state
   const [showDownloadPopup, setShowDownloadPopup] = useState(false);
 
+  // Edit sections state
   const [editingDescription, setEditingDescription] = useState(false);
   const [editingExpectedResult, setEditingExpectedResult] = useState(false);
   const [editingActionSteps, setEditingActionSteps] = useState(false);
@@ -66,6 +57,7 @@ export default function ViewDetailPage() {
   const [tempExpectedResult, setTempExpectedResult] = useState("");
   const [tempActionSteps, setTempActionSteps] = useState([]);
 
+  /* ------------------------ Test Data – Add/Edit support ------------------------ */
   const [newField, setNewField] = useState({
     type: "primitive",
     label: "",
@@ -82,37 +74,43 @@ export default function ViewDetailPage() {
 
   const nextId = (prefix = "f") => `${prefix}_${Math.random().toString(36).slice(2, 9)}`;
 
-  // Test Data Operations
+  // primitive
   const updatePrimitive = (id, value) => {
     setTestDataList((list) => list.map((it) => (it.id === id ? { ...it, value } : it)));
   };
 
+  // object
   const addObjectProp = (id) => {
     setTestDataList((list) =>
       list.map((it) =>
         it.id === id
-          ? { ...it, value: [...it.value, { key: `key_${it.value.length + 1}`, value: "" }] }
+          ? {
+              ...it,
+              value: [...it.value, { key: `key_${it.value.length + 1}`, value: "" }],
+            }
           : it
       )
     );
   };
-
   const updateObjectProp = (id, idx, key, value) => {
     setTestDataList((list) =>
       list.map((it) =>
         it.id === id
-          ? { ...it, value: it.value.map((p, i) => (i === idx ? { key, value } : p)) }
+          ? {
+              ...it,
+              value: it.value.map((p, i) => (i === idx ? { key, value } : p)),
+            }
           : it
       )
     );
   };
-
   const removeObjectProp = (id, idx) => {
     setTestDataList((list) =>
       list.map((it) => (it.id === id ? { ...it, value: it.value.filter((_, i) => i !== idx) } : it))
     );
   };
 
+  // array
   const addArrayItem = (id, asObject = false) => {
     setTestDataList((list) =>
       list.map((it) =>
@@ -130,15 +128,15 @@ export default function ViewDetailPage() {
       )
     );
   };
-
   const updateArrayItemValue = (id, idx, value) => {
     setTestDataList((list) =>
       list.map((it) =>
-        it.id === id ? { ...it, value: it.value.map((v, i) => (i === idx ? { ...v, value } : v)) } : it
+        it.id === id
+          ? { ...it, value: it.value.map((v, i) => (i === idx ? { ...v, value } : v)) }
+          : it
       )
     );
   };
-
   const addArrayItemProp = (id, idx) => {
     setTestDataList((list) =>
       list.map((it) =>
@@ -147,7 +145,10 @@ export default function ViewDetailPage() {
               ...it,
               value: it.value.map((v, i) =>
                 i === idx
-                  ? { ...v, properties: [...(v.properties || []), { key: `key_${(v.properties?.length || 0) + 1}`, value: "" }] }
+                  ? {
+                      ...v,
+                      properties: [...(v.properties || []), { key: `key_${(v.properties?.length || 0) + 1}`, value: "" }],
+                    }
                   : v
               ),
             }
@@ -155,7 +156,6 @@ export default function ViewDetailPage() {
       )
     );
   };
-
   const updateArrayItemProp = (id, idx, pidx, key, value) => {
     setTestDataList((list) =>
       list.map((it) =>
@@ -163,14 +163,18 @@ export default function ViewDetailPage() {
           ? {
               ...it,
               value: it.value.map((v, i) =>
-                i === idx ? { ...v, properties: v.properties.map((p, pi) => (pi === pidx ? { key, value } : p)) } : v
+                i === idx
+                  ? {
+                      ...v,
+                      properties: v.properties.map((p, pi) => (pi === pidx ? { key, value } : p)),
+                    }
+                  : v
               ),
             }
           : it
       )
     );
   };
-
   const removeArrayItem = (id, idx) => {
     setTestDataList((list) =>
       list.map((it) => (it.id === id ? { ...it, value: it.value.filter((_, i) => i !== idx) } : it))
@@ -196,164 +200,256 @@ export default function ViewDetailPage() {
     } else {
       setTestDataList((list) => [
         ...list,
-        { id, label, type: "array", key, value: [{ id: nextId("arr"), index: 0, value: "" }] },
+        {
+          id,
+          label,
+          type: "array",
+          key,
+          value: [{ id: nextId("arr"), index: 0, value: "" }],
+        },
       ]);
     }
 
     setNewField({ type: "primitive", label: "", value: "" });
   };
 
-  // Backend Save Helpers
-  const buildInputDataPayload = (list) => {
-    const out = {};
-    list.forEach((item) => {
-      if (item.type === "primitive") {
-        out[item.id] = item.value;
-      } else if (item.type === "object") {
-        const obj = {};
-        item.value.forEach((p) => (obj[p.key] = p.value));
-        out[item.id] = obj;
-      } else if (item.type === "array") {
-        out[item.id] = item.value.map((v) => {
-          if (v.properties) {
-            const obj = {};
-            v.properties.forEach((p) => (obj[p.key] = p.value));
-            return obj;
-          }
-          return v.value;
-        });
+  // ✅ Helper function to save to backend
+  const saveToBackend = async (updatedData) => {
+    try {
+      const response = await authFetch(
+        `${API_BASE}/api/bpmn/files/${fileId}/scenarios/${scenario.path_id}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updatedData)
+        },
+        { onUnauthorizedRedirectTo: '/login' }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to save: ${response.status}`);
+      }
+
+      return true;
+    } catch (err) {
+      console.error("Save failed:", err);
+      throw err;
+    }
+  };
+
+  // Mapping displayName -> elementId
+  const buildElementMapping = (viewer, data) => {
+    const registry = viewer.get("elementRegistry");
+    const elements = registry.getAll();
+    const mapping = {};
+
+    if (data.elementsJson && Array.isArray(data.elementsJson)) {
+      data.elementsJson.forEach((elem) => {
+        if (elem.lane && elem.name) {
+          const displayName = `[${elem.lane}] ${elem.name}`;
+          mapping[displayName] = elem.id;
+        } else if (elem.name) {
+          mapping[elem.name] = elem.id;
+          mapping[`[System] ${elem.name}`] = elem.id;
+        }
+      });
+    }
+
+    elements.forEach((el) => {
+      const bo = el.businessObject;
+      if (bo && bo.name) {
+        mapping[bo.name] = el.id;
+        if (el.parent && el.parent.type === "bpmn:SubProcess") {
+          mapping[`[System] ${bo.name}`] = el.id;
+        }
+        const lane = findElementLane(el, elements);
+        if (lane) mapping[`[${lane}] ${bo.name}`] = el.id;
       }
     });
-    return out;
+
+    elementMappingRef.current = mapping;
   };
 
-  const saveToBackend = async (updatedData) => {
-    const targetId = scenario?.path_id;
-    if (!fileId || !targetId) throw new Error("Missing file or scenario ID");
-    const res = await authFetch(
-      `${API_BASE}/api/bpmn/files/${fileId}/scenarios/${targetId}`,
-      { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updatedData) },
-      { onUnauthorizedRedirectTo: "/login" }
-    );
-    if (!res.ok) throw new Error(`Failed to save: ${res.status}`);
-  };
-
-  // Lazy-load BPMN viewer
-  useEffect(() => {
-    (async () => {
-      try {
-        const M = await import("bpmn-js/lib/NavigatedViewer");
-        BpmnViewer = M.default;
-      } catch {
-        const M = await import("bpmn-js");
-        BpmnViewer = M.default;
+  const findElementLane = (element, allElements) => {
+    const lanes = allElements.filter((el) => el.type === "bpmn:Lane");
+    for (const lane of lanes) {
+      if (lane.businessObject?.flowNodeRef && lane.businessObject.flowNodeRef.includes(element.id)) {
+        return lane.businessObject.name || lane.id;
       }
-      setBpmnViewerReady(true);
-    })();
+    }
+    return null;
+  };
+
+  const convertToActualIds = (displayNames) => {
+    if (!Array.isArray(displayNames)) return [];
+    const mapping = elementMappingRef.current;
+    return displayNames
+      .map((displayName) => {
+        let actualId = mapping[displayName];
+        if (!actualId && displayName.includes("[System]")) {
+          const cleanName = displayName.replace(/^\[.*?\]\s*/, "");
+          actualId = mapping[cleanName];
+        }
+        if (!actualId && displayName.includes("]")) {
+          const withoutLane = displayName.replace(/^\[.*?\]\s*/, "");
+          actualId = mapping[withoutLane];
+        }
+        if (!actualId) {
+          console.warn(`No mapping found for display name: ${displayName}`);
+          return displayName;
+        }
+        return actualId;
+      })
+      .filter(Boolean);
+  };
+
+  const findFlowIdsBetween = (fromId, toId) => {
+    if (!viewerRef.current) return [];
+    try {
+      const reg = viewerRef.current.get("elementRegistry");
+      const from = reg.get(fromId);
+      if (!from || !from.outgoing) return [];
+      return from.outgoing.filter((f) => f?.target?.id === toId).map((f) => f.id);
+    } catch {
+      return [];
+    }
+  };
+
+  // Initialize BPMN viewer
+  useEffect(() => {
+    const init = async () => {
+      if (typeof window !== "undefined" && !BpmnViewer) {
+        try {
+          const BpmnJS = await import("bpmn-js/lib/NavigatedViewer");
+          BpmnViewer = BpmnJS.default;
+          setBpmnViewerReady(true);
+        } catch (error) {
+          try {
+            const BpmnJS = await import("bpmn-js");
+            BpmnViewer = BpmnJS.default;
+            setBpmnViewerReady(true);
+          } catch (fallbackError) {
+            console.warn("BPMN viewer not available:", fallbackError);
+            setBpmnViewerReady(false);
+          }
+        }
+      } else if (BpmnViewer) {
+        setBpmnViewerReady(true);
+      }
+    };
+    init();
   }, []);
 
-  // Fetch scenario detail
   useEffect(() => {
-    if (!fileId) {
+    if (fileId) {
+      fetchScenarioDetail();
+    } else {
       setError("No file ID provided");
       setLoading(false);
-      return;
     }
-
-    let cancelled = false;
-
-    (async () => {
-      try {
-        setLoading(true);
-        setError(null);
-
-        const res = await authFetch(
-          `${API_BASE}/api/bpmn/files/${fileId}`,
-          { method: "GET" },
-          { onUnauthorizedRedirectTo: "/login" }
-        );
-        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-        const bpmnData = await res.json();
-        if (cancelled) return;
-
-        setData(bpmnData);
-
-        let selectedScenario = null;
-        const scenarios = bpmnData.testScenariosJson || [];
-        if (scenarios.length > 0) {
-          if (scenarioId) {
-            selectedScenario = scenarios.find(
-              (s) => s.path_id === scenarioId || s.path_id === `P${scenarioId}`
-            );
-          }
-          if (!selectedScenario) {
-            selectedScenario = scenarios[pathIndex] || scenarios[0];
-          }
-        }
-        setScenario(selectedScenario);
-
-        if (selectedScenario?.input_data) {
-          const processed = processInputDataGrouped(selectedScenario.input_data);
-          setTestDataList(processed);
-          setOriginalTestData(JSON.parse(JSON.stringify(processed)));
-        }
-
-        if (bpmnViewerReady && BpmnViewer && bpmnData.bpmnXml && containerRef.current) {
-          await initializeBpmnDiagram(bpmnData.bpmnXml, selectedScenario);
-        }
-      } catch (e) {
-        if (!cancelled) setError(e.message || "Failed to fetch scenario");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-
     return () => {
-      cancelled = true;
-      try {
-        viewerRef.current?.destroy();
-      } catch {}
+      if (viewerRef.current) {
+        try {
+          viewerRef.current.destroy();
+        } catch {}
+      }
     };
-  }, [fileId, scenarioId, pathIndex, bpmnViewerReady]);
+  }, [fileId, scenarioId]);
 
-  // Init BPMN diagram
-  const initializeBpmnDiagram = async (bpmnXml, selectedScenario) => {
+  const fetchScenarioDetail = async () => {
     try {
-      viewerRef.current?.destroy();
-    } catch {}
+      setLoading(true);
+      setError(null);
 
-    const viewer = new BpmnViewer({
-      container: containerRef.current,
-      width: "100%",
-      height: "500px",
-    });
-    viewerRef.current = viewer;
+      const response = await authFetch(
+        `${API_BASE}/api/bpmn/files/${fileId}`,
+        { method: "GET" },
+        { onUnauthorizedRedirectTo: "/login" }
+      );
 
-    await viewer.importXML(bpmnXml);
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 
-    // Build mapping menggunakan utils
-    const mapping = buildElementMapping(viewer);
-    elementMappingRef.current = mapping;
+      const bpmnData = await response.json();
+      setData(bpmnData);
 
-    // Highlight path menggunakan utils
-    if (selectedScenario?.rawPath?.length) {
-      const actualIds = convertToActualIds(selectedScenario.rawPath, mapping);
-      highlightPath(viewer, actualIds);
+      let selectedScenario = null;
+      if (bpmnData.testScenariosJson?.length > 0) {
+        if (scenarioId) {
+          selectedScenario = bpmnData.testScenariosJson.find(
+            (s) => s.path_id === scenarioId || s.path_id === `P${scenarioId}`
+          );
+        }
+        if (!selectedScenario) {
+          selectedScenario = bpmnData.testScenariosJson[pathIndex] || bpmnData.testScenariosJson[0];
+        }
+      }
+      setScenario(selectedScenario);
+
+      if (selectedScenario?.input_data) {
+        const processed = processInputDataGrouped(selectedScenario.input_data);
+        setTestDataList(processed);
+        setOriginalTestData(JSON.parse(JSON.stringify(processed)));
+      }
+
+      if (bpmnViewerReady && BpmnViewer && bpmnData.bpmnXml && containerRef.current) {
+        await initializeBpmnDiagram(bpmnData.bpmnXml, selectedScenario);
+      }
+    } catch (err) {
+      setError(err.message || "Failed to fetch scenario details");
+    } finally {
+      setLoading(false);
     }
-
-    viewer.get("canvas").zoom("fit-viewport");
   };
 
-  // Re-highlight saat scenario berubah
-  useEffect(() => {
-    if (!viewerRef.current || !scenario?.rawPath?.length) return;
-    const ids = convertToActualIds(scenario.rawPath, elementMappingRef.current);
-    highlightPath(viewerRef.current, ids);
-  }, [scenario]);
+  const initializeBpmnDiagram = async (bpmnXml, selectedScenario) => {
+    try {
+      if (viewerRef.current) viewerRef.current.destroy();
 
-  // Process input data
+      const viewer = new BpmnViewer({
+        container: containerRef.current,
+        width: "100%",
+        height: "500px",
+      });
+      viewerRef.current = viewer;
+
+      await viewer.importXML(bpmnXml);
+
+      buildElementMapping(viewer, data);
+      extractElementNames(viewer);
+
+      if (selectedScenario?.rawPath) {
+        const actualIds = convertToActualIds(selectedScenario.rawPath);
+        highlightPath(actualIds);
+      }
+
+      viewer.get("eventBus").on("rendered", () => {
+        const canvasContainer = viewer.get("canvas").getContainer();
+        const texts = canvasContainer.querySelectorAll(".djs-label text");
+        texts.forEach((el) => {
+          el.removeAttribute("stroke");
+          el.style.stroke = "none";
+          el.style.paintOrder = "normal";
+          el.style.fontWeight = "normal";
+          el.style.fill = "black";
+          el.style.vectorEffect = "non-scaling-stroke";
+          el.style.shapeRendering = "geometricPrecision";
+        });
+      });
+
+      viewer.get("canvas").zoom("fit-viewport");
+    } catch (bpmnError) {
+      console.error("Error initializing BPMN viewer:", bpmnError);
+    }
+  };
+
+  useEffect(() => {
+    if (bpmnViewerReady && data?.bpmnXml && containerRef.current && !viewerRef.current) {
+      initializeBpmnDiagram(data.bpmnXml, scenario);
+    }
+  }, [bpmnViewerReady, data, scenario]);
+
   const processInputDataGrouped = (inputData) => {
-    const arr = [];
+    const testDataArray = [];
     Object.entries(inputData).forEach(([key, value]) => {
       const cleanKey = key
         .replace(/_/g, " ")
@@ -364,54 +460,138 @@ export default function ViewDetailPage() {
 
       if (typeof value === "object" && value !== null) {
         if (Array.isArray(value)) {
-          const items = value.map((item, i) => {
+          const arrayItems = value.map((item, index) => {
             if (typeof item === "object") {
               return {
-                id: `${key}_${i}`,
-                index: i,
-                properties: Object.entries(item).map(([k, v]) => ({ key: k, value: String(v) }))
+                id: `${key}_${index}`,
+                index,
+                properties: Object.entries(item).map(([subKey, subValue]) => ({
+                  key: subKey,
+                  value: String(subValue),
+                })),
               };
             }
-            return { id: `${key}_${i}`, index: i, value: String(item) };
+            return { id: `${key}_${index}`, index, value: String(item) };
           });
-          arr.push({ id: key, label: cleanKey, value: items, type: "array" });
+          testDataArray.push({ id: key, label: cleanKey, value: arrayItems, type: "array" });
         } else {
-          const props = Object.entries(value).map(([k, v]) => ({ key: k, value: String(v) }));
-          arr.push({ id: key, label: cleanKey, value: props, type: "object" });
+          const objectItems = Object.entries(value).map(([subKey, subValue]) => ({
+            key: subKey,
+            value: String(subValue),
+          }));
+          testDataArray.push({ id: key, label: cleanKey, value: objectItems, type: "object" });
         }
       } else {
-        arr.push({ id: key, label: cleanKey, value: String(value), type: "primitive" });
+        testDataArray.push({ id: key, label: cleanKey, value: String(value), type: "primitive" });
       }
     });
-    return arr;
+    return testDataArray;
   };
 
-  const getActionSteps = (scenarioStep) =>
-    (scenarioStep || "")
+  const extractElementNames = (viewer) => {
+    try {
+      const registry = viewer.get("elementRegistry");
+      const elements = registry.getAll();
+      const nameMap = {};
+      elements.forEach((el) => {
+        nameMap[el.id] = el.businessObject?.name || el.id;
+      });
+      setElementNames(nameMap);
+    } catch {}
+  };
+
+  const highlightPath = (actualIds) => {
+    if (!viewerRef.current || !Array.isArray(actualIds) || actualIds.length === 0) return;
+
+    try {
+      const canvas = viewerRef.current.get("canvas");
+      const registry = viewerRef.current.get("elementRegistry");
+
+      registry.getAll().forEach((el) => {
+        canvas.removeMarker(el.id, "highlight-path");
+        canvas.removeMarker(el.id, "highlight-subprocess");
+      });
+
+      const valid = actualIds
+        .map((id) => {
+          const element = registry.get(id);
+          if (!element) return null;
+          return {
+            id,
+            element,
+            isSubprocessElement: element.parent && element.parent.type === "bpmn:SubProcess",
+          };
+        })
+        .filter(Boolean);
+
+      if (!valid.length) {
+        canvas.zoom("fit-viewport");
+        return;
+      }
+
+      valid.forEach(({ id, isSubprocessElement }) => {
+        const marker = isSubprocessElement ? "highlight-subprocess" : "highlight-path";
+        canvas.addMarker(id, marker);
+      });
+
+      for (let i = 0; i < valid.length - 1; i++) {
+        const flowIds = findFlowIdsBetween(valid[i].id, valid[i + 1].id);
+        flowIds.forEach((fid) => canvas.addMarker(fid, "highlight-path"));
+      }
+
+      canvas.zoom("fit-viewport");
+    } catch (error) {
+      console.warn("Error highlighting path:", error);
+    }
+  };
+
+  const getActionSteps = (scenarioStep) => {
+    if (!scenarioStep) return [];
+    const steps = scenarioStep
       .split("\n")
-      .map((s) => s.trim())
-      .filter((s) => s.match(/^\d+\.\s+/) || s.startsWith("->"))
-      .map((s) => s.replace(/^\d+\.\s*/, "").replace(/^->\s*/, "").trim())
-      .filter(Boolean);
+      .map((step) => step.trim())
+      .filter((step) => step.match(/^\d+\.\s+/) || step.startsWith("->"))
+      .map((step) => step.replace(/^\d+\.\s*/, "").replace(/^->\s*/, "").trim())
+      .filter((step) => step.length > 0);
+    return steps;
+  };
 
-  const getStatusDisplay = (sc) =>
-    sc?.expected_result?.message?.trim() || "No expected result";
+  const getStatusDisplay = (scenario) => {
+    if (!scenario) return "-";
+    const message = scenario?.expected_result?.message?.trim();
+    return message || "-";
+  };
 
-  // Viewer controls
-  const handleZoomFit = () => viewerRef.current?.get("canvas").zoom("fit-viewport");
+  // BPMN Viewer Controls
+  const handleZoomFit = () => {
+    if (viewerRef.current) {
+      const canvas = viewerRef.current.get("canvas");
+      canvas.zoom("fit-viewport");
+    }
+  };
   const handleZoomIn = () => {
-    const canvas = viewerRef.current?.get("canvas");
-    if (!canvas) return;
-    canvas.zoom(canvas.zoom() + 0.1);
+    if (viewerRef.current) {
+      const canvas = viewerRef.current.get("canvas");
+      canvas.zoom(canvas.zoom() + 0.1);
+    }
   };
   const handleZoomOut = () => {
-    const canvas = viewerRef.current?.get("canvas");
-    if (!canvas) return;
-    canvas.zoom(canvas.zoom() - 0.1);
+    if (viewerRef.current) {
+      const canvas = viewerRef.current.get("canvas");
+      canvas.zoom(canvas.zoom() - 0.1);
+    }
   };
-  const handleResetHighlight = () => clearAllHighlights(viewerRef.current);
+  const handleResetHighlight = () => {
+    if (!viewerRef.current) return;
+    const canvas = viewerRef.current.get("canvas");
+    const elementRegistry = viewerRef.current.get("elementRegistry");
+    elementRegistry.getAll().forEach((el) => {
+      canvas.removeMarker(el.id, "highlight-path");
+      canvas.removeMarker(el.id, "highlight-subprocess");
+    });
+  };
 
-  // Edit handlers
+  // ✅ FIXED: Edit handlers with backend save
   const handleEditDescription = () => {
     setEditingDescription(true);
     setTempDescription(scenario?.readable_description || "");
@@ -420,21 +600,52 @@ export default function ViewDetailPage() {
   const handleSaveDescription = async () => {
     setSaving(true);
     try {
+      const updatedInputData = {};
+      testDataList.forEach(item => {
+        if (item.type === 'primitive') {
+          updatedInputData[item.id] = item.value;
+        } else if (item.type === 'object') {
+          const obj = {};
+          item.value.forEach(prop => {
+            obj[prop.key] = prop.value;
+          });
+          updatedInputData[item.id] = obj;
+        } else if (item.type === 'array') {
+          const arr = item.value.map(arrItem => {
+            if (arrItem.properties) {
+              const obj = {};
+              arrItem.properties.forEach(prop => {
+                obj[prop.key] = prop.value;
+              });
+              return obj;
+            }
+            return arrItem.value;
+          });
+          updatedInputData[item.id] = arr;
+        }
+      });
+
       await saveToBackend({
-        input_data: buildInputDataPayload(testDataList),
+        input_data: updatedInputData,
         readable_description: tempDescription,
         scenario_step: scenario.scenario_step,
         expected_result: scenario.expected_result
       });
-      setScenario((p) => ({ ...p, readable_description: tempDescription }));
+
+      setScenario((prev) => ({ ...prev, readable_description: tempDescription }));
       setEditingDescription(false);
       setSaveSuccess(true);
-      setTimeout(() => setSaveSuccess(false), 2000);
-    } catch (e) {
-      alert("Failed to save description: " + e.message);
+      setTimeout(() => setSaveSuccess(false), 2500);
+    } catch (err) {
+      alert("Failed to save description: " + err.message);
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleCancelDescription = () => {
+    setEditingDescription(false);
+    setTempDescription("");
   };
 
   const handleEditExpectedResult = () => {
@@ -445,53 +656,130 @@ export default function ViewDetailPage() {
   const handleSaveExpectedResult = async () => {
     setSaving(true);
     try {
+      const updatedInputData = {};
+      testDataList.forEach(item => {
+        if (item.type === 'primitive') {
+          updatedInputData[item.id] = item.value;
+        } else if (item.type === 'object') {
+          const obj = {};
+          item.value.forEach(prop => {
+            obj[prop.key] = prop.value;
+          });
+          updatedInputData[item.id] = obj;
+        } else if (item.type === 'array') {
+          const arr = item.value.map(arrItem => {
+            if (arrItem.properties) {
+              const obj = {};
+              arrItem.properties.forEach(prop => {
+                obj[prop.key] = prop.value;
+              });
+              return obj;
+            }
+            return arrItem.value;
+          });
+          updatedInputData[item.id] = arr;
+        }
+      });
+
       await saveToBackend({
-        input_data: buildInputDataPayload(testDataList),
+        input_data: updatedInputData,
         readable_description: scenario.readable_description,
         scenario_step: scenario.scenario_step,
         expected_result: { ...scenario.expected_result, message: tempExpectedResult }
       });
-      setScenario((p) => ({ ...p, expected_result: { ...p?.expected_result, message: tempExpectedResult } }));
+
+      setScenario((prev) => ({
+        ...prev,
+        expected_result: { ...prev?.expected_result, message: tempExpectedResult },
+      }));
       setEditingExpectedResult(false);
       setSaveSuccess(true);
-      setTimeout(() => setSaveSuccess(false), 2000);
-    } catch (e) {
-      alert("Failed to save expected result: " + e.message);
+      setTimeout(() => setSaveSuccess(false), 2500);
+    } catch (err) {
+      alert("Failed to save expected result: " + err.message);
     } finally {
       setSaving(false);
     }
   };
 
+  const handleCancelExpectedResult = () => {
+    setEditingExpectedResult(false);
+    setTempExpectedResult("");
+  };
+
   const handleEditActionSteps = () => {
     setEditingActionSteps(true);
-    const current = getActionSteps(scenario?.scenario_step);
-    setTempActionSteps(current.length ? current : [""]);
+    const currentSteps = getActionSteps(scenario?.scenario_step);
+    setTempActionSteps(currentSteps.length > 0 ? currentSteps : [""]);
   };
 
   const handleSaveActionSteps = async () => {
     setSaving(true);
     try {
-      const formatted = tempActionSteps
-        .filter((s) => s.trim())
-        .map((s, i) => `${i + 1}. ${s}`)
+      const formattedSteps = tempActionSteps
+        .filter((step) => step.trim() !== "")
+        .map((step, index) => `${index + 1}. ${step}`)
         .join("\n");
 
+      const updatedInputData = {};
+      testDataList.forEach(item => {
+        if (item.type === 'primitive') {
+          updatedInputData[item.id] = item.value;
+        } else if (item.type === 'object') {
+          const obj = {};
+          item.value.forEach(prop => {
+            obj[prop.key] = prop.value;
+          });
+          updatedInputData[item.id] = obj;
+        } else if (item.type === 'array') {
+          const arr = item.value.map(arrItem => {
+            if (arrItem.properties) {
+              const obj = {};
+              arrItem.properties.forEach(prop => {
+                obj[prop.key] = prop.value;
+              });
+              return obj;
+            }
+            return arrItem.value;
+          });
+          updatedInputData[item.id] = arr;
+        }
+      });
+
       await saveToBackend({
-        input_data: buildInputDataPayload(testDataList),
+        input_data: updatedInputData,
         readable_description: scenario.readable_description,
-        scenario_step: formatted,
+        scenario_step: formattedSteps,
         expected_result: scenario.expected_result
       });
 
-      setScenario((p) => ({ ...p, scenario_step: formatted }));
+      setScenario((prev) => ({ ...prev, scenario_step: formattedSteps }));
       setEditingActionSteps(false);
       setSaveSuccess(true);
-      setTimeout(() => setSaveSuccess(false), 2000);
-    } catch (e) {
-      alert("Failed to save action steps: " + e.message);
+      setTimeout(() => setSaveSuccess(false), 2500);
+    } catch (err) {
+      alert("Failed to save action steps: " + err.message);
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleCancelActionSteps = () => {
+    setEditingActionSteps(false);
+    setTempActionSteps([]);
+  };
+
+  const addActionStep = () => setTempActionSteps([...tempActionSteps, ""]);
+  const removeActionStep = (index) => setTempActionSteps(tempActionSteps.filter((_, i) => i !== index));
+  const updateActionStep = (index, value) => {
+    const newSteps = [...tempActionSteps];
+    newSteps[index] = value;
+    setTempActionSteps(newSteps);
+  };
+
+  const handleEditTestData = () => {
+    setEditingTestData(true);
+    setSaveSuccess(false);
   };
 
   const handleSaveChanges = async () => {
@@ -499,21 +787,51 @@ export default function ViewDetailPage() {
       navigate("/scenario", { state: { fileId }, replace: true });
       return;
     }
+    
     setSaving(true);
     setSaveSuccess(false);
+    
     try {
+      const updatedInputData = {};
+      testDataList.forEach(item => {
+        if (item.type === 'primitive') {
+          updatedInputData[item.id] = item.value;
+        } else if (item.type === 'object') {
+          const obj = {};
+          item.value.forEach(prop => {
+            obj[prop.key] = prop.value;
+          });
+          updatedInputData[item.id] = obj;
+        } else if (item.type === 'array') {
+          const arr = item.value.map(arrItem => {
+            if (arrItem.properties) {
+              const obj = {};
+              arrItem.properties.forEach(prop => {
+                obj[prop.key] = prop.value;
+              });
+              return obj;
+            }
+            return arrItem.value;
+          });
+          updatedInputData[item.id] = arr;
+        }
+      });
+
       await saveToBackend({
-        input_data: buildInputDataPayload(testDataList),
+        input_data: updatedInputData,
         readable_description: scenario.readable_description,
         scenario_step: scenario.scenario_step,
         expected_result: scenario.expected_result
       });
+
       setOriginalTestData(JSON.parse(JSON.stringify(testDataList)));
       setEditingTestData(false);
       setSaveSuccess(true);
-      setTimeout(() => setSaveSuccess(false), 2000);
-    } catch (e) {
-      alert("Save failed: " + e.message);
+      setTimeout(() => setSaveSuccess(false), 2500);
+      
+    } catch (err) {
+      alert("Save failed: " + err.message);
+      setSaveSuccess(false);
     } finally {
       setSaving(false);
     }
@@ -525,18 +843,11 @@ export default function ViewDetailPage() {
     setTestDataList(JSON.parse(JSON.stringify(originalTestData)));
   };
 
-  const addActionStep = () => setTempActionSteps([...tempActionSteps, ""]);
-  const removeActionStep = (index) => setTempActionSteps(tempActionSteps.filter((_, i) => i !== index));
-  const updateActionStep = (index, value) => {
-    const newSteps = [...tempActionSteps];
-    newSteps[index] = value;
-    setTempActionSteps(newSteps);
-  };
-
-  const handleDownload = async ({ format, includeTesterName, testerName }) => {
+  const handleDownload = async (downloadOptions) => {
+    const { format, includeTesterName, testerName } = downloadOptions;
     if (!fileId) throw new Error("File ID not found");
 
-    const payload = {
+    const downloadData = {
       format,
       pathId: scenario?.path_id || "-",
       description: scenario?.readable_description || "No description available",
@@ -545,27 +856,32 @@ export default function ViewDetailPage() {
       expectedResult: getStatusDisplay(scenario),
       fileName: data?.fileName || "BPMN File",
       includeTester: includeTesterName,
-      testerName: includeTesterName ? testerName : null
+      testerName: includeTesterName ? testerName : null,
     };
 
-    const res = await authFetch(
+    const response = await authFetch(
       `${API_BASE}/api/bpmn/files/download/${fileId}`,
-      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) },
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(downloadData),
+      },
       { onUnauthorizedRedirectTo: "/login" }
     );
 
-    if (!res.ok) {
-      const t = await res.text();
-      throw new Error(`Server error: ${res.status} - ${t}`);
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Server error: ${response.status} - ${errorText}`);
     }
 
-    const blob = await res.blob();
-    if (blob.size === 0) throw new Error("Received empty file");
+    const blob = await response.blob();
+    if (blob.size === 0) throw new Error("Received empty file from server");
 
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
     a.download = `test-scenario-${scenario?.path_id || "detail"}.${format === "pdf" ? "pdf" : "xlsx"}`;
+    a.style.display = "none";
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -592,6 +908,7 @@ export default function ViewDetailPage() {
               <button
                 onClick={() => removeField(item.id)}
                 className="px-2 py-1 text-red-600 hover:bg-red-50 rounded"
+                title="Remove field"
               >
                 Hapus
               </button>
@@ -747,7 +1064,7 @@ export default function ViewDetailPage() {
       );
     }
 
-    // VIEW mode
+    // VIEW mode (non-editable)
     if (item.type === "array") {
       return (
         <div key={item.id} className="bg-blue-50 border-l-4 border-blue-400 p-4 rounded-lg">
@@ -841,6 +1158,7 @@ export default function ViewDetailPage() {
   // Main render
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* Header */}
       <header className="bg-white border-b border-gray-200 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
@@ -875,8 +1193,10 @@ export default function ViewDetailPage() {
         </div>
       </header>
 
+      {/* Main */}
       <div className="max-w-6xl mx-auto p-8">
         <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+          {/* Header Section */}
           <div className="border-b border-gray-200 p-6">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-4">
@@ -903,13 +1223,13 @@ export default function ViewDetailPage() {
               <div className="flex items-center justify-between">
                 <h2 className="text-lg font-semibold text-gray-900">BPMN Diagram</h2>
                 <div className="flex items-center space-x-2">
-                  <button onClick={handleZoomOut} className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors" disabled={!bpmnViewerReady}>
+                  <button onClick={handleZoomOut} className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors" title="Zoom Out" disabled={!bpmnViewerReady}>
                     <ZoomOut className="w-4 h-4" />
                   </button>
-                  <button onClick={handleZoomIn} className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors" disabled={!bpmnViewerReady}>
+                  <button onClick={handleZoomIn} className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors" title="Zoom In" disabled={!bpmnViewerReady}>
                     <ZoomIn className="w-4 h-4" />
                   </button>
-                  <button onClick={handleZoomFit} className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors" disabled={!bpmnViewerReady}>
+                  <button onClick={handleZoomFit} className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors" title="Fit to View" disabled={!bpmnViewerReady}>
                     <RotateCcw className="w-4 h-4" />
                   </button>
                   <button onClick={handleResetHighlight} className="px-3 py-2 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors" disabled={!bpmnViewerReady}>
@@ -924,6 +1244,7 @@ export default function ViewDetailPage() {
                       <div className="text-center">
                         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-400 mx-auto mb-4"></div>
                         <p className="text-lg font-medium">Loading BPMN Viewer...</p>
+                        <p className="text-sm mt-2">Please wait while we initialize the diagram viewer</p>
                       </div>
                     </div>
                   )}
@@ -931,265 +1252,319 @@ export default function ViewDetailPage() {
               </div>
             </div>
 
-            {/* Scenario Description */}
-            <section className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-lg font-medium text-gray-900">Scenario Description</h3>
-                {!editingDescription && (
-                  <Button
-                    onClick={handleEditDescription}
-                    className="flex items-center space-x-2 text-[#2185D5] hover:text-[#1D5D9B] hover:bg-blue-50 border border-[#2185D5] bg-transparent px-3 py-2 rounded-lg transition-colors text-sm"
-                  >
-                    <Edit2 className="w-4 h-4" />
-                    <span>Edit</span>
-                  </Button>
-                )}
-              </div>
-
-              {!editingDescription ? (
-                <div className="bg-gray-50 rounded-lg p-6 border border-gray-200">
-                  <p className="text-gray-700 leading-relaxed">
-                    {scenario?.readable_description || "No description available."}
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <textarea
-                    value={tempDescription}
-                    onChange={(e) => setTempDescription(e.target.value)}
-                    className="w-full p-4 border border-gray-300 rounded-lg text-sm leading-relaxed focus:ring-2 focus:ring-[#2185D5] focus:border-transparent resize-none"
-                    rows={6}
-                    placeholder="Enter scenario description..."
-                  />
-                  <div className="flex space-x-3">
-                    <Button 
-                      onClick={handleSaveDescription} 
-                      disabled={saving}
-                      className="flex items-center space-x-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors text-sm"
+            {/* Sections */}
+            <div className="space-y-8">
+              {/* Description */}
+              <section className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-medium text-gray-900">Scenario Description</h3>
+                  {!editingDescription && (
+                    <Button
+                      onClick={handleEditDescription}
+                      className="flex items-center space-x-2 text-[#2185D5] hover:text-[#1D5D9B] hover:bg-blue-50 border border-[#2185D5] hover:border-[#1D5D9B] bg-transparent px-3 py-2 rounded-lg transition-colors text-sm"
                     >
-                      <Save className="w-4 h-4" />
-                      <span>{saving ? 'Saving...' : 'Save Changes'}</span>
+                      <Edit2 className="w-4 h-4" />
+                      <span>Edit</span>
                     </Button>
-                    <Button onClick={() => setEditingDescription(false)} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors text-sm">
-                      Cancel
-                    </Button>
-                  </div>
+                  )}
                 </div>
-              )}
-            </section>
 
-            {/* Action Steps */}
-            <section className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-lg font-medium text-gray-900">Action Steps</h3>
-                {!editingActionSteps && (
-                  <Button
-                    onClick={handleEditActionSteps}
-                    className="flex items-center space-x-2 text-[#2185D5] hover:text-[#1D5D9B] hover:bg-blue-50 border border-[#2185D5] bg-transparent px-3 py-2 rounded-lg transition-colors text-sm"
-                  >
-                    <Edit2 className="w-4 h-4" />
-                    <span>Edit</span>
-                  </Button>
+                {!editingDescription ? (
+                  <div className="bg-gray-50 rounded-lg p-6 border border-gray-200">
+                    <p className="text-gray-700 leading-relaxed">
+                      {scenario?.readable_description ||
+                        "Lorem ipsum is simply dummy text of the printing and typesetting industry."}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <textarea
+                      value={tempDescription}
+                      onChange={(e) => setTempDescription(e.target.value)}
+                      className="w-full p-4 border border-gray-300 rounded-lg text-sm leading-relaxed focus:ring-2 focus:ring-[#2185D5] focus:border-transparent resize-none"
+                      rows={6}
+                      placeholder="Enter scenario description..."
+                    />
+                    <div className="flex space-x-3">
+                      <Button 
+                        onClick={handleSaveDescription} 
+                        disabled={saving}
+                        className="flex items-center space-x-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors text-sm"
+                        style={{ opacity: saving ? 0.6 : 1 }}
+                      >
+                        <Save className="w-4 h-4" />
+                        <span>{saving ? 'Saving...' : 'Save Changes'}</span>
+                      </Button>
+                      <Button onClick={handleCancelDescription} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors text-sm">
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
                 )}
-              </div>
+              </section>
 
-              {!editingActionSteps ? (
-                <div className="bg-gray-50 rounded-lg p-6 border border-gray-200">
-                  {getActionSteps(scenario?.scenario_step).length > 0 ? (
-                    <ol className="space-y-2">
-                      {getActionSteps(scenario?.scenario_step).map((step, index) => (
-                        <li key={index} className="flex items-start space-x-3">
-                          <span className="flex-shrink-0 w-6 h-6 bg-[#2185D5] text-white text-xs font-medium rounded-full flex items-center justify-center">
+              {/* Action Steps */}
+              <section className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-medium text-gray-900">Action Steps</h3>
+                  {!editingActionSteps && (
+                    <Button
+                      onClick={handleEditActionSteps}
+                      className="flex items-center space-x-2 text-[#2185D5] hover:text-[#1D5D9B] hover:bg-blue-50 border border-[#2185D5] hover:border-[#1D5D9B] bg-transparent px-3 py-2 rounded-lg transition-colors text-sm"
+                    >
+                      <Edit2 className="w-4 h-4" />
+                      <span>Edit</span>
+                    </Button>
+                  )}
+                </div>
+
+                {!editingActionSteps ? (
+                  <div className="bg-gray-50 rounded-lg p-6 border border-gray-200">
+                    {getActionSteps(scenario?.scenario_step).length > 0 ? (
+                      <ol className="space-y-2">
+                        {getActionSteps(scenario?.scenario_step).map((step, index) => (
+                          <li key={index} className="flex items-start space-x-3">
+                            <span className="flex-shrink-0 w-6 h-6 bg-[#2185D5] text-white text-xs font-medium rounded-full flex items-center justify-center">
+                              {index + 1}
+                            </span>
+                            <span className="text-gray-700 leading-relaxed">{step}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    ) : (
+                      <p className="text-gray-400 italic">No action steps available.</p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="space-y-3">
+                      {tempActionSteps.map((step, index) => (
+                        <div key={index} className="flex items-center space-x-3">
+                          <span className="flex-shrink-0 w-6 h-6 bg-gray-400 text-white text-xs font-medium rounded-full flex items-center justify-center">
                             {index + 1}
                           </span>
-                          <span className="text-gray-700 leading-relaxed">{step}</span>
-                        </li>
+                          <input
+                            type="text"
+                            value={step}
+                            onChange={(e) => updateActionStep(index, e.target.value)}
+                            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#2185D5] focus:border-transparent"
+                            placeholder={`Action step ${index + 1}...`}
+                          />
+                          <button onClick={() => removeActionStep(index)} className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors">
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
                       ))}
-                    </ol>
-                  ) : (
-                    <p className="text-gray-400 italic">No action steps available.</p>
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="space-y-3">
-                    {tempActionSteps.map((step, index) => (
-                      <div key={index} className="flex items-center space-x-3">
-                        <span className="flex-shrink-0 w-6 h-6 bg-gray-400 text-white text-xs font-medium rounded-full flex items-center justify-center">
-                          {index + 1}
-                        </span>
-                        <input
-                          type="text"
-                          value={step}
-                          onChange={(e) => updateActionStep(index, e.target.value)}
-                          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#2185D5] focus:border-transparent"
-                          placeholder={`Action step ${index + 1}...`}
-                        />
-                        <button onClick={() => removeActionStep(index)} className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors">
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ))}
+                    </div>
+
+                    <button onClick={addActionStep} className="flex items-center space-x-2 text-[#2185D5] hover:text-[#1D5D9B] hover:bg-blue-50 px-3 py-2 rounded-lg transition-colors text-sm">
+                      <Plus className="w-4 h-4" />
+                      <span>Add Step</span>
+                    </button>
+
+                    <div className="flex space-x-3 pt-2 border-t border-gray-200">
+                      <Button 
+                        onClick={handleSaveActionSteps} 
+                        disabled={saving}
+                        className="flex items-center space-x-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors text-sm"
+                        style={{ opacity: saving ? 0.6 : 1 }}
+                      >
+                        <Save className="w-4 h-4" />
+                        <span>{saving ? 'Saving...' : 'Save Changes'}</span>
+                      </Button>
+                      <Button onClick={handleCancelActionSteps} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors text-sm">
+                        Cancel
+                      </Button>
+                    </div>
                   </div>
-
-                  <button onClick={addActionStep} className="flex items-center space-x-2 text-[#2185D5] hover:text-[#1D5D9B] hover:bg-blue-50 px-3 py-2 rounded-lg transition-colors text-sm">
-                    <Plus className="w-4 h-4" />
-                    <span>Add Step</span>
-                  </button>
-
-                  <div className="flex space-x-3 pt-2 border-t border-gray-200">
-                    <Button 
-                      onClick={handleSaveActionSteps} 
-                      disabled={saving}
-                      className="flex items-center space-x-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors text-sm"
-                    >
-                      <Save className="w-4 h-4" />
-                      <span>{saving ? 'Saving...' : 'Save Changes'}</span>
-                    </Button>
-                    <Button onClick={() => setEditingActionSteps(false)} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors text-sm">
-                      Cancel
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </section>
-
-            {/* Test Data */}
-            <section className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-lg font-medium text-gray-900">Test Data</h3>
-                {!editingTestData && (
-                  <Button
-                    onClick={() => setEditingTestData(true)}
-                    className="flex items-center space-x-2 text-[#2185D5] hover:text-[#1D5D9B] hover:bg-blue-50 border border-[#2185D5] bg-transparent px-3 py-2 rounded-lg transition-colors text-sm"
-                  >
-                    <Edit2 className="w-4 h-4" />
-                    <span>Edit</span>
-                  </Button>
                 )}
-              </div>
+              </section>
 
-              {!editingTestData ? (
-                <div className="bg-gray-50 rounded-lg p-6 border border-gray-200">
-                  {testDataList.length > 0 ? (
-                    <div className="space-y-4">{testDataList.map((item, index) => renderTestDataItem(item, index))}</div>
-                  ) : (
-                    <p className="text-gray-400 italic">No test data available.</p>
+              {/* Test Data */}
+              <section className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-medium text-gray-900">Test Data</h3>
+                  {!editingTestData && (
+                    <Button
+                      onClick={handleEditTestData}
+                      className="flex items-center space-x-2 text-[#2185D5] hover:text-[#1D5D9B] hover:bg-blue-50 border border-[#2185D5] hover:border-[#1D5D9B] bg-transparent px-3 py-2 rounded-lg transition-colors text-sm"
+                    >
+                      <Edit2 className="w-4 h-4" />
+                      <span>Edit</span>
+                    </Button>
                   )}
                 </div>
-              ) : (
-                <div className="space-y-6">
-                  <div className="bg-white border border-gray-200 rounded-lg p-4">
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                      <div>
-                        <label className="block text-xs text-gray-500 mb-1">Type</label>
-                        <select
-                          className="w-full px-3 py-2 border rounded-md"
-                          value={newField.type}
-                          onChange={(e) => setNewField((s) => ({ ...s, type: e.target.value }))}
-                        >
-                          <option value="primitive">Primitive</option>
-                          <option value="object">Object</option>
-                          <option value="array">Array</option>
-                        </select>
-                      </div>
-                      <div className="md:col-span-2">
-                        <label className="block text-xs text-gray-500 mb-1">Label</label>
-                        <input
-                          className="w-full px-3 py-2 border rounded-md"
-                          placeholder="e.g. Delivery Address"
-                          value={newField.label}
-                          onChange={(e) => setNewField((s) => ({ ...s, label: e.target.value }))}
-                        />
-                      </div>
-                      {newField.type === "primitive" && (
+
+                {!editingTestData ? (
+                  <div className="bg-gray-50 rounded-lg p-6 border border-gray-200">
+                    {testDataList.length > 0 ? (
+                      <div className="space-y-4">{testDataList.map((item, index) => renderTestDataItem(item, index))}</div>
+                    ) : (
+                      <p className="text-gray-400 italic">No test data available.</p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    {/* Add New Field */}
+                    <div className="bg-white border border-gray-200 rounded-lg p-4">
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                         <div>
-                          <label className="block text-xs text-gray-500 mb-1">Initial Value</label>
+                          <label className="block text-xs text-gray-500 mb-1">Type</label>
+                          <select
+                            className="w-full px-3 py-2 border rounded-md"
+                            value={newField.type}
+                            onChange={(e) => setNewField((s) => ({ ...s, type: e.target.value }))}
+                          >
+                            <option value="primitive">Primitive</option>
+                            <option value="object">Object</option>
+                            <option value="array">Array</option>
+                          </select>
+                        </div>
+                        <div className="md:col-span-2">
+                          <label className="block text-xs text-gray-500 mb-1">Label</label>
                           <input
                             className="w-full px-3 py-2 border rounded-md"
-                            placeholder="e.g. 123 Pizza Street"
-                            value={newField.value}
-                            onChange={(e) => setNewField((s) => ({ ...s, value: e.target.value }))}
+                            placeholder="e.g. Delivery Address"
+                            value={newField.label}
+                            onChange={(e) => setNewField((s) => ({ ...s, label: e.target.value }))}
                           />
                         </div>
-                      )}
+                        {newField.type === "primitive" && (
+                          <div>
+                            <label className="block text-xs text-gray-500 mb-1">Initial Value</label>
+                            <input
+                              className="w-full px-3 py-2 border rounded-md"
+                              placeholder="e.g. 123 Pizza Street"
+                              value={newField.value}
+                              onChange={(e) => setNewField((s) => ({ ...s, value: e.target.value }))}
+                            />
+                          </div>
+                        )}
+                      </div>
+                      <div className="mt-3">
+                        <button
+                          onClick={handleAddNewField}
+                          className="px-3 py-2 bg-[#2185D5] hover:bg-[#1D5D9B] text-white rounded-md text-sm"
+                        >
+                          + Add Field
+                        </button>
+                      </div>
                     </div>
-                    <div className="mt-3">
-                      <button
-                        onClick={handleAddNewField}
-                        className="px-3 py-2 bg-[#2185D5] hover:bg-[#1D5D9B] text-white rounded-md text-sm"
+
+                    {/* Editable list */}
+                    <div className="space-y-4">{testDataList.map((item, index) => renderTestDataItem(item, index))}</div>
+
+                    <div className="flex justify-between items-center pt-4 border-t border-gray-200">
+                      <Button
+                        onClick={handleCancelEdit}
+                        className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors text-sm"
                       >
-                        + Add Field
-                      </button>
+                        Cancel
+                      </Button>
+                      <Button
+                        onClick={async () => {
+                          setSaving(true);
+                          try {
+                            const updatedInputData = {};
+                            testDataList.forEach(item => {
+                              if (item.type === 'primitive') {
+                                updatedInputData[item.id] = item.value;
+                              } else if (item.type === 'object') {
+                                const obj = {};
+                                item.value.forEach(prop => {
+                                  obj[prop.key] = prop.value;
+                                });
+                                updatedInputData[item.id] = obj;
+                              } else if (item.type === 'array') {
+                                const arr = item.value.map(arrItem => {
+                                  if (arrItem.properties) {
+                                    const obj = {};
+                                    arrItem.properties.forEach(prop => {
+                                      obj[prop.key] = prop.value;
+                                    });
+                                    return obj;
+                                  }
+                                  return arrItem.value;
+                                });
+                                updatedInputData[item.id] = arr;
+                              }
+                            });
+
+                            await saveToBackend({
+                              input_data: updatedInputData,
+                              readable_description: scenario.readable_description,
+                              scenario_step: scenario.scenario_step,
+                              expected_result: scenario.expected_result
+                            });
+
+                            setEditingTestData(false);
+                            setOriginalTestData(JSON.parse(JSON.stringify(testDataList)));
+                            setSaveSuccess(true);
+                            setTimeout(() => setSaveSuccess(false), 2500);
+                          } catch (error) {
+                            alert('Failed to save: ' + error.message);
+                          } finally {
+                            setSaving(false);
+                          }
+                        }}
+                        disabled={saving}
+                        className="flex items-center space-x-2 bg-[#2185D5] hover:bg-[#1D5D9B] text-white px-6 py-2 rounded-lg transition-colors text-sm"
+                        style={{ opacity: saving ? 0.6 : 1, cursor: saving ? 'not-allowed' : 'pointer' }}
+                      >
+                        <Save className="w-4 h-4" />
+                        <span>{saving ? 'Saving...' : 'Save Test Data'}</span>
+                      </Button>
                     </div>
                   </div>
-
-                  <div className="space-y-4">{testDataList.map((item, index) => renderTestDataItem(item, index))}</div>
-
-                  <div className="flex justify-between items-center pt-4 border-t border-gray-200">
-                    <Button
-                      onClick={handleCancelEdit}
-                      className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors text-sm"
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      onClick={handleSaveChanges}
-                      disabled={saving}
-                      className="flex items-center space-x-2 bg-[#2185D5] hover:bg-[#1D5D9B] text-white px-6 py-2 rounded-lg transition-colors text-sm"
-                    >
-                      <Save className="w-4 h-4" />
-                      <span>{saving ? 'Saving...' : 'Save Test Data'}</span>
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </section>
-
-            {/* Expected Result */}
-            <section className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-lg font-medium text-gray-900">Expected Result</h3>
-                {!editingExpectedResult && (
-                  <Button
-                    onClick={handleEditExpectedResult}
-                    className="flex items-center space-x-2 text-[#2185D5] hover:text-[#1D5D9B] hover:bg-blue-50 border border-[#2185D5] bg-transparent px-3 py-2 rounded-lg transition-colors text-sm"
-                  >
-                    <Edit2 className="w-4 h-4" />
-                    <span>Edit</span>
-                  </Button>
                 )}
-              </div>
+              </section>
 
-              {!editingExpectedResult ? (
-                <div className="bg-gray-50 rounded-lg p-6 border border-gray-200">
-                  <p className="text-gray-700 leading-relaxed">{getStatusDisplay(scenario)}</p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <textarea
-                    value={tempExpectedResult}
-                    onChange={(e) => setTempExpectedResult(e.target.value)}
-                    className="w-full p-4 border border-gray-300 rounded-lg text-sm leading-relaxed focus:ring-2 focus:ring-[#2185D5] focus:border-transparent resize-none"
-                    rows={4}
-                    placeholder="Enter expected result..."
-                  />
-                  <div className="flex space-x-3">
-                    <Button 
-                      onClick={handleSaveExpectedResult} 
-                      disabled={saving}
-                      className="flex items-center space-x-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors text-sm"
+              {/* Expected Result */}
+              <section className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-medium text-gray-900">Expected Result</h3>
+                  {!editingExpectedResult && (
+                    <Button
+                      onClick={handleEditExpectedResult}
+                      className="flex items-center space-x-2 text-[#2185D5] hover:text-[#1D5D9B] hover:bg-blue-50 border border-[#2185D5] hover:border-[#1D5D9B] bg-transparent px-3 py-2 rounded-lg transition-colors text-sm"
                     >
-                      <Save className="w-4 h-4" />
-                      <span>{saving ? 'Saving...' : 'Save Changes'}</span>
+                      <Edit2 className="w-4 h-4" />
+                      <span>Edit</span>
                     </Button>
-                    <Button onClick={() => setEditingExpectedResult(false)} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors text-sm">
-                      Cancel
-                    </Button>
-                  </div>
+                  )}
                 </div>
-              )}
-            </section>
+
+                {!editingExpectedResult ? (
+                  <div className="bg-gray-50 rounded-lg p-6 border border-gray-200">
+                    <p className="text-gray-700 leading-relaxed">{getStatusDisplay(scenario)}</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <textarea
+                      value={tempExpectedResult}
+                      onChange={(e) => setTempExpectedResult(e.target.value)}
+                      className="w-full p-4 border border-gray-300 rounded-lg text-sm leading-relaxed focus:ring-2 focus:ring-[#2185D5] focus:border-transparent resize-none"
+                      rows={4}
+                      placeholder="Enter expected result..."
+                    />
+                    <div className="flex space-x-3">
+                      <Button 
+                        onClick={handleSaveExpectedResult} 
+                        disabled={saving}
+                        className="flex items-center space-x-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors text-sm"
+                        style={{ opacity: saving ? 0.6 : 1 }}
+                      >
+                        <Save className="w-4 h-4" />
+                        <span>{saving ? 'Saving...' : 'Save Changes'}</span>
+                      </Button>
+                      <Button onClick={handleCancelExpectedResult} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors text-sm">
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </section>
+            </div>
 
             {/* Footer buttons */}
             <div className="flex items-center justify-between pt-8 border-t border-gray-200">
@@ -1205,14 +1580,14 @@ export default function ViewDetailPage() {
                 onClick={handleSaveChanges}
                 disabled={saving}
                 className="flex items-center space-x-2 text-white px-8 py-3 rounded-lg transition-colors font-medium shadow-sm"
-                style={{ backgroundColor: saving ? "#A0AEC0" : "#2185D5" }}
+                style={{ backgroundColor: saving ? "#A0AEC0" : "#2185D5", cursor: saving ? "not-allowed" : "pointer" }}
               >
                 <Save className="w-5 h-5" />
-                <span>{saving ? "Saving..." : saveSuccess ? "Changes Saved!" : "Save Changes"}</span>
+                <span>{saving ? "Saving..." : editingTestData ? "Save Changes" : saveSuccess ? "Changes Saved!" : "Save Changes"}</span>
               </Button>
             </div>
 
-            {saveSuccess && (
+            {saveSuccess && !editingTestData && (
               <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-center">
                 <div className="flex items-center justify-center space-x-2 text-green-700">
                   <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
@@ -1230,6 +1605,7 @@ export default function ViewDetailPage() {
         </div>
       </div>
 
+      {/* Download Popup */}
       <DownloadPopup
         isOpen={showDownloadPopup}
         onClose={() => setShowDownloadPopup(false)}
@@ -1238,7 +1614,7 @@ export default function ViewDetailPage() {
         fileId={fileId}
       />
 
-      <style>{`
+     <style>{`
 /* ============================================================================
    BPMN Highlight CSS - Complete Version
    Untuk ScenarioPage.jsx dan ViewDetailPage.jsx
