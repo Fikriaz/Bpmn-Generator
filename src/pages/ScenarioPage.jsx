@@ -1,4 +1,5 @@
 "use client";
+import { buildElementMapping, convertToActualIds, highlightPath } from "../utils/bpmnHighlight";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
@@ -33,7 +34,20 @@ import "bpmn-js/dist/assets/bpmn-font/css/bpmn-embedded.css";
 
 // biar aman di prod/hosting, bpmn-js dipakai via dynamic import
 let BpmnViewerLocal = null;
+// setelah importXML
+await viewerRef.current.importXML(data.bpmnXml);
 
+// build mapping sekali per import
+const mapping = buildElementMapping(viewerRef.current);
+
+// contoh: pakai scenario terpilih
+if (selectedScenario?.rawPath?.length) {
+  const ids = convertToActualIds(selectedScenario.rawPath, mapping);
+  highlightPath(viewerRef.current, ids);
+}
+
+// zoom
+viewerRef.current.get("canvas").zoom("fit-viewport");
 export default function ScenarioPage() {
   /* ===== Refs & State Utama ===== */
   const viewerRef = useRef(null);
@@ -897,211 +911,101 @@ export default function ScenarioPage() {
       />
 
    <style>{`
+/* ===== Layout dasar ===== */
 .djs-container { width: 100% !important; height: 100% !important; }
-  /* ===== Z-INDEX HIERARCHY (PALING PENTING) ===== */
-  /* Lane dan Participant harus di bawah */
-  .djs-element[data-element-id*="Lane"],
-  .djs-element[data-element-id*="Participant"],
-  .djs-element[class*="Lane"],
-  .djs-element[class*="Participant"] {
-    z-index: 1 !important;
-  }
 
-  /* Element biasa di layer tengah */
-  .djs-element[data-element-id*="Task"],
-  .djs-element[data-element-id*="Activity"],
-  .djs-element[data-element-id*="Event"],
-  .djs-element[data-element-id*="Gateway"],
-  .djs-element[class*="Task"],
-  .djs-element[class*="Activity"],
-  .djs-element[class*="Event"],
-  .djs-element[class*="Gateway"] {
-    z-index: 10 !important;
-  }
+/* Z-index */
+.djs-element[data-element-id*="Lane"],
+.djs-element[data-element-id*="Participant"],
+.djs-element[class*="Lane"],
+.djs-element[class*="Participant"] { z-index: 1 !important; }
 
-  /* Highlighted elements HARUS di atas semua */
-  .djs-element.highlight-path,
-  .djs-element.highlight-subprocess {
-    z-index: 10000 !important;
-    position: relative;
-  }
+.djs-element[data-element-id*="Task"],
+.djs-element[data-element-id*="Activity"],
+.djs-element[data-element-id*="Event"],
+.djs-element[data-element-id*="Gateway"],
+.djs-element[class*="Task"],
+.djs-element[class*="Activity"],
+.djs-element[class*="Event"],
+.djs-element[class*="Gateway"] { z-index: 10 !important; }
 
-  /* Connection highlights juga di atas */
-  .djs-connection.highlight-path {
-    z-index: 9999 !important;
-  }
+.djs-element.highlight-path,
+.djs-element.highlight-subprocess { z-index: 10000 !important; position: relative; }
+.djs-connection.highlight-path { z-index: 9999 !important; }
 
-  /* ===== TEXT RESET ===== */
-  .djs-label text, 
-  .djs-visual text {
-    stroke: none !important;
-    stroke-width: 0 !important;
-    paint-order: normal !important;
-    font-weight: normal !important;
-    fill: black !important;
-    font-family: Arial, sans-serif !important;
-    font-size: 12px !important;
-  }
+/* Text reset & di atas shape */
+.djs-label text, .djs-visual text {
+  stroke: none !important; stroke-width: 0 !important; paint-order: normal !important;
+  font-weight: normal !important; fill: black !important; font-family: Arial, sans-serif !important; font-size: 12px !important;
+}
+.djs-label { z-index: 100001 !important; pointer-events: none !important; }
+.highlight-path .djs-label, .highlight-subprocess .djs-label { z-index: 100002 !important; }
 
-  /* ===== EVENTS - #98E9DD (Cyan tosca) ===== */
-  .djs-element.highlight-path[data-element-id*="StartEvent"] .djs-visual > circle,
-  .djs-element.highlight-path[data-element-id*="EndEvent"] .djs-visual > circle,
-  .djs-element.highlight-path[data-element-id*="Event_"] .djs-visual > circle,
-  .djs-element.highlight-path[data-element-id*="IntermediateCatchEvent"] .djs-visual > circle,
-  .djs-element.highlight-path[data-element-id*="IntermediateThrowEvent"] .djs-visual > circle,
-  .djs-element.highlight-path[data-element-id*="BoundaryEvent"] .djs-visual > circle,
-  .djs-element.highlight-path[class*="StartEvent"] .djs-visual > circle,
-  .djs-element.highlight-path[class*="EndEvent"] .djs-visual > circle,
-  .djs-element.highlight-path[class*="IntermediateEvent"] .djs-visual > circle,
-  .djs-element.highlight-path[class*="BoundaryEvent"] .djs-visual > circle {
-    fill: #98E9DD !important;
-    stroke: #000000 !important;
-    stroke-width: 2 !important;
-  }
+/* EVENTS */
+.djs-element.highlight-path .djs-visual > circle {
+  fill: #98E9DD !important; stroke: #000000 !important; stroke-width: 2 !important;
+}
+/* Ikon di dalam event (amplop, dsb) tetap kontras */
+.djs-element.highlight-path .djs-visual > path {
+  stroke: #000000 !important; stroke-width: 1.5px !important; fill: none;
+}
 
-  /* ===== TASKS - #FFFFBD (Yellow) ===== */
-  .djs-element.highlight-path[data-element-id*="Task"] .djs-visual > rect,
-  .djs-element.highlight-path[data-element-id*="Activity_"] .djs-visual > rect,
-  .djs-element.highlight-path[data-element-id*="UserTask"] .djs-visual > rect,
-  .djs-element.highlight-path[data-element-id*="ServiceTask"] .djs-visual > rect,
-  .djs-element.highlight-path[data-element-id*="ManualTask"] .djs-visual > rect,
-  .djs-element.highlight-path[data-element-id*="ScriptTask"] .djs-visual > rect,
-  .djs-element.highlight-path[data-element-id*="BusinessRuleTask"] .djs-visual > rect,
-  .djs-element.highlight-path[class*="Task"] .djs-visual > rect,
-  .djs-element.highlight-path[class*="Activity"] .djs-visual > rect,
-  .djs-element.highlight-path[class*="UserTask"] .djs-visual > rect,
-  .djs-element.highlight-path[class*="ServiceTask"] .djs-visual > rect {
-    fill: #FFFFBD !important;
-    stroke: #000000 !important;
-    stroke-width: 2 !important;
-  }
+/* TASKS */
+.djs-element.highlight-path .djs-visual > rect {
+  fill: #FFFFBD !important; stroke: #000000 !important; stroke-width: 2 !important;
+}
 
-  /* ===== MESSAGE/RECEIVE TASK - #96DF67 (Light green) ===== */
-  .djs-element.highlight-path[data-element-id*="MessageTask"] .djs-visual > rect,
-  .djs-element.highlight-path[data-element-id*="ReceiveTask"] .djs-visual > rect,
-  .djs-element.highlight-path[data-element-id*="SendTask"] .djs-visual > rect,
-  .djs-element.highlight-path[class*="MessageTask"] .djs-visual > rect,
-  .djs-element.highlight-path[class*="ReceiveTask"] .djs-visual > rect,
-  .djs-element.highlight-path[class*="SendTask"] .djs-visual > rect {
-    fill: #96DF67 !important;
-    stroke: #000000 !important;
-    stroke-width: 2 !important;
-  }
+/* GATEWAYS */
+.djs-element.highlight-path .djs-visual > polygon,
+.djs-element.highlight-path .djs-visual > circle {
+  fill: #E0E0E0 !important; stroke: #000000 !important; stroke-width: 2 !important;
+}
 
-  /* ===== GATEWAYS - #E0E0E0 (Light gray) ===== */
-  
-  /* ===== GATEWAYS - #E0E0E0 ===== */
-.djs-element.highlight-path[data-element-id*="Gateway"] .djs-visual > circle,
-.djs-element.highlight-path[class*="Gateway"] .djs-visual > circle,
-  .djs-element.highlight-path[data-element-id*="Gateway"] .djs-visual > polygon,
-  .djs-element.highlight-path[class*="Gateway"] .djs-visual > polygon,
-  .djs-element.highlight-path[class*="ExclusiveGateway"] .djs-visual > polygon,
-  .djs-element.highlight-path[class*="ParallelGateway"] .djs-visual > polygon,
-  .djs-element.highlight-path[class*="InclusiveGateway"] .djs-visual > polygon {
-    fill: #E0E0E0 !important;
-    stroke: #000000 !important;
-    stroke-width: 2 !important;
-  }
-  .djs-element.highlight-path[data-element-id*="Gateway"] .djs-visual > polygon,
-  .djs-element.highlight-path[class*="Gateway"] .djs-visual > polygon,
-  .djs-element.highlight-path[class*="ExclusiveGateway"] .djs-visual > polygon,
-  .djs-element.highlight-path[class*="ParallelGateway"] .djs-visual > polygon,
-  .djs-element.highlight-path[class*="InclusiveGateway"] .djs-visual > polygon {
-    fill: #E0E0E0 !important;
-    stroke: #000000 !important;
-    stroke-width: 2 !important;
-  }
+/* SUBPROCESS container */
+.djs-element.highlight-subprocess .djs-visual > rect,
+.djs-element.highlight-subprocess .djs-visual > circle,
+.djs-element.highlight-subprocess .djs-visual > polygon,
+.djs-element.highlight-subprocess .djs-visual > path {
+  fill: rgba(152, 233, 221, 0.3) !important; stroke: #000 !important; stroke-width: 2 !important;
+}
 
-  /* ===== SUBPROCESS - transparent cyan ===== */
-  .djs-element.highlight-subprocess .djs-visual > rect,
-  .djs-element.highlight-subprocess .djs-visual > circle,
-  .djs-element.highlight-subprocess .djs-visual > polygon,
-  .djs-element.highlight-subprocess .djs-visual > path {
-    fill: rgba(152, 233, 221, 0.3) !important;
-    stroke: #000000 !important;
-    stroke-width: 2 !important;
-  }
+/* CONNECTIONS */
+.djs-connection.highlight-path .djs-visual > path,
+.djs-connection.highlight-path .djs-visual > polyline {
+  stroke: #000000 !important; stroke-width: 3px !important;
+}
+.djs-connection.highlight-path[class*="MessageFlow"] .djs-visual > path {
+  stroke: #000000 !important; stroke-width: 2px !important; stroke-dasharray: 8, 4 !important;
+}
+  /* Timer Event */
+.djs-element.highlight-path[data-element-id*="TimerEvent"] .djs-visual > circle {
+  fill: #FFD580 !important; /* orange */
+  stroke: #000 !important;
+}
 
-  /* SubProcess container */
-  .djs-element[data-element-id*="SubProcess"] .djs-visual > rect,
-  .djs-element[class*="SubProcess"] .djs-visual > rect {
-    fill: rgba(255, 255, 255, 0.8) !important;
-    stroke: #ddd !important;
-    stroke-width: 1px !important;
-  }
+/* Signal Event */
+.djs-element.highlight-path[data-element-id*="SignalEvent"] .djs-visual > circle {
+  fill: #A5D6A7 !important; /* hijau muda */
+  stroke: #000 !important;
+}
 
-  .djs-element[data-element-id*="SubProcess"].highlight-subprocess .djs-visual > rect,
-  .djs-element[class*="SubProcess"].highlight-subprocess .djs-visual > rect {
-    fill: rgba(152, 233, 221, 0.15) !important;
-    stroke: #000000 !important;
-    stroke-width: 2px !important;
-  }
+/* Error Event */
+.djs-element.highlight-path[data-element-id*="ErrorEvent"] .djs-visual > circle {
+  fill: #FF8A80 !important; /* merah muda */
+  stroke: #000 !important;
+}
 
-  /* ===== CONNECTIONS ===== */
-  .djs-connection.highlight-path .djs-visual > path,
-  .djs-connection.highlight-path .djs-visual > polyline {
-    stroke: #000000 !important;
-    stroke-width: 3px !important;
-  }
+/* Call Activity */
+.djs-element.highlight-path[data-element-id*="CallActivity"] .djs-visual > rect {
+  fill: #B3E5FC !important; /* biru muda */
+  stroke: #000 !important;
+}
 
-  .djs-connection.highlight-path[class*="MessageFlow"] .djs-visual > path {
-    stroke: #000000 !important;
-    stroke-width: 2px !important;
-    stroke-dasharray: 8, 4 !important;
-  }
 
-  /* ===== FALLBACK untuk element tanpa ID/class spesifik ===== */
-  .djs-element.highlight-path .djs-visual > circle {
-    fill: #98E9DD !important;
-    stroke: #000000 !important;
-    stroke-width: 2 !important;
-  }
+/* Visibility */
+.djs-element.highlight-path .djs-visual,
+.djs-element.highlight-subprocess .djs-visual { opacity: 1 !important; visibility: visible !important; }
 
-  .djs-element.highlight-path .djs-visual > rect {
-    fill: #FFFFBD !important;
-    stroke: #000000 !important;
-    stroke-width: 2 !important;
-  }
-
-  .djs-element.highlight-path .djs-visual > polygon {
-    fill: #E0E0E0 !important;
-    stroke: #000000 !important;
-    stroke-width: 2 !important;
-  }
-
-  /* ===== VISIBILITY ===== */
-  .djs-element.highlight-path .djs-visual,
-  .djs-element.highlight-subprocess .djs-visual {
-    opacity: 1 !important;
-    visibility: visible !important;
-  }
-
-  /* SubProcess pointer events */
-  .djs-element[data-element-id*="SubProcess"] .djs-visual,
-  .djs-element[class*="SubProcess"] .djs-visual {
-    pointer-events: none;
-  }
-
-  /* ===== TEXT PADA HIGHLIGHTED ELEMENT ===== */
-  .djs-element.highlight-path .djs-label text,
-  .djs-element.highlight-subprocess .djs-label text {
-    stroke: none !important;
-    font-weight: normal !important;
-    fill: black !important;
-  }
-
-  /* ===== DATA OBJECTS & ANNOTATIONS ===== */
-  .djs-element.highlight-path[class*="DataObject"] .djs-visual > path,
-  .djs-element.highlight-path[class*="DataStore"] .djs-visual > path {
-    fill: #E0E0E0 !important;
-    stroke: #000000 !important;
-    stroke-width: 2 !important;
-  }
-
-  .djs-element.highlight-path[class*="TextAnnotation"] .djs-visual > path {
-    stroke: #000000 !important;
-    stroke-width: 1.5 !important;
-  }
 `}</style>
     </div>
   );

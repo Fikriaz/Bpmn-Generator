@@ -17,6 +17,11 @@ import Button from "../components/ui/Button";
 import UserMenu from "../components/ui/UserMenu";
 import DownloadPopup from "../components/DownloadPopup";
 import { API_BASE, authFetch } from "../utils/auth";
+import {
+  buildElementMapping,
+  convertToActualIds,
+  highlightPath,
+} from "../utils/bpmnHighlight";
 
 // Import BPMN viewer
 let BpmnViewer = null;
@@ -40,7 +45,6 @@ export default function ViewDetailPage() {
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
-  const [elementNames, setElementNames] = useState({});
   const [editingTestData, setEditingTestData] = useState(false);
   const [testDataList, setTestDataList] = useState([]);
   const [originalTestData, setOriginalTestData] = useState([]);
@@ -54,7 +58,7 @@ export default function ViewDetailPage() {
   const [editingExpectedResult, setEditingExpectedResult] = useState(false);
   const [editingActionSteps, setEditingActionSteps] = useState(false);
   const [tempDescription, setTempDescription] = useState("");
-  const [tempExpectedResult, setTempExpectedResult] = useState("");
+  the [tempExpectedResult, setTempExpectedResult] = useState("");
   const [tempActionSteps, setTempActionSteps] = useState([]);
 
   /* ------------------------ Test Data – Add/Edit support ------------------------ */
@@ -219,11 +223,11 @@ export default function ViewDetailPage() {
       const response = await authFetch(
         `${API_BASE}/api/bpmn/files/${fileId}/scenarios/${scenario.path_id}`,
         {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(updatedData)
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updatedData),
         },
-        { onUnauthorizedRedirectTo: '/login' }
+        { onUnauthorizedRedirectTo: "/login" }
       );
 
       if (!response.ok) {
@@ -237,85 +241,7 @@ export default function ViewDetailPage() {
     }
   };
 
-  // Mapping displayName -> elementId
-  const buildElementMapping = (viewer, data) => {
-    const registry = viewer.get("elementRegistry");
-    const elements = registry.getAll();
-    const mapping = {};
-
-    if (data.elementsJson && Array.isArray(data.elementsJson)) {
-      data.elementsJson.forEach((elem) => {
-        if (elem.lane && elem.name) {
-          const displayName = `[${elem.lane}] ${elem.name}`;
-          mapping[displayName] = elem.id;
-        } else if (elem.name) {
-          mapping[elem.name] = elem.id;
-          mapping[`[System] ${elem.name}`] = elem.id;
-        }
-      });
-    }
-
-    elements.forEach((el) => {
-      const bo = el.businessObject;
-      if (bo && bo.name) {
-        mapping[bo.name] = el.id;
-        if (el.parent && el.parent.type === "bpmn:SubProcess") {
-          mapping[`[System] ${bo.name}`] = el.id;
-        }
-        const lane = findElementLane(el, elements);
-        if (lane) mapping[`[${lane}] ${bo.name}`] = el.id;
-      }
-    });
-
-    elementMappingRef.current = mapping;
-  };
-
-  const findElementLane = (element, allElements) => {
-    const lanes = allElements.filter((el) => el.type === "bpmn:Lane");
-    for (const lane of lanes) {
-      if (lane.businessObject?.flowNodeRef && lane.businessObject.flowNodeRef.includes(element.id)) {
-        return lane.businessObject.name || lane.id;
-      }
-    }
-    return null;
-  };
-
-  const convertToActualIds = (displayNames) => {
-    if (!Array.isArray(displayNames)) return [];
-    const mapping = elementMappingRef.current;
-    return displayNames
-      .map((displayName) => {
-        let actualId = mapping[displayName];
-        if (!actualId && displayName.includes("[System]")) {
-          const cleanName = displayName.replace(/^\[.*?\]\s*/, "");
-          actualId = mapping[cleanName];
-        }
-        if (!actualId && displayName.includes("]")) {
-          const withoutLane = displayName.replace(/^\[.*?\]\s*/, "");
-          actualId = mapping[withoutLane];
-        }
-        if (!actualId) {
-          console.warn(`No mapping found for display name: ${displayName}`);
-          return displayName;
-        }
-        return actualId;
-      })
-      .filter(Boolean);
-  };
-
-  const findFlowIdsBetween = (fromId, toId) => {
-    if (!viewerRef.current) return [];
-    try {
-      const reg = viewerRef.current.get("elementRegistry");
-      const from = reg.get(fromId);
-      if (!from || !from.outgoing) return [];
-      return from.outgoing.filter((f) => f?.target?.id === toId).map((f) => f.id);
-    } catch {
-      return [];
-    }
-  };
-
-  // Initialize BPMN viewer
+  // Initialize BPMN viewer (lazy import)
   useEffect(() => {
     const init = async () => {
       if (typeof window !== "undefined" && !BpmnViewer) {
@@ -402,46 +328,56 @@ export default function ViewDetailPage() {
   };
 
   const initializeBpmnDiagram = async (bpmnXml, selectedScenario) => {
-    try {
-      if (viewerRef.current) viewerRef.current.destroy();
+    if (viewerRef.current) viewerRef.current.destroy();
 
-      const viewer = new BpmnViewer({
-        container: containerRef.current,
-        width: "100%",
-        height: "500px",
-      });
-      viewerRef.current = viewer;
+    const viewer = new BpmnViewer({
+      container: containerRef.current,
+      width: "100%",
+      height: "500px",
+    });
+    viewerRef.current = viewer;
 
-      await viewer.importXML(bpmnXml);
+    await viewer.importXML(bpmnXml);
 
-      buildElementMapping(viewer, data);
-      extractElementNames(viewer);
+    // Build mapping via utils
+    const mapping = buildElementMapping(viewer);
+    elementMappingRef.current = mapping;
 
-      if (selectedScenario?.rawPath) {
-        const actualIds = convertToActualIds(selectedScenario.rawPath);
-        highlightPath(actualIds);
-      }
-
-      viewer.get("eventBus").on("rendered", () => {
-        const canvasContainer = viewer.get("canvas").getContainer();
-        const texts = canvasContainer.querySelectorAll(".djs-label text");
-        texts.forEach((el) => {
-          el.removeAttribute("stroke");
-          el.style.stroke = "none";
-          el.style.paintOrder = "normal";
-          el.style.fontWeight = "normal";
-          el.style.fill = "black";
-          el.style.vectorEffect = "non-scaling-stroke";
-          el.style.shapeRendering = "geometricPrecision";
-        });
-      });
-
-      viewer.get("canvas").zoom("fit-viewport");
-    } catch (bpmnError) {
-      console.error("Error initializing BPMN viewer:", bpmnError);
+    // Highlight based on rawPath (display names)
+    if (selectedScenario?.rawPath?.length) {
+      const actualIds = convertToActualIds(selectedScenario.rawPath, mapping);
+      highlightPath(viewer, actualIds);
     }
+
+    // Optional: cleanup label stroke artifacts
+    viewer.get("eventBus").on("rendered", () => {
+      const canvasContainer = viewer.get("canvas").getContainer();
+      const texts = canvasContainer.querySelectorAll(".djs-label text");
+      texts.forEach((el) => {
+        el.removeAttribute("stroke");
+        el.style.stroke = "none";
+        el.style.paintOrder = "normal";
+        el.style.fontWeight = "normal";
+        el.style.fill = "black";
+        el.style.vectorEffect = "non-scaling-stroke";
+        el.style.shapeRendering = "geometricPrecision";
+      });
+    });
+
+    viewer.get("canvas").zoom("fit-viewport");
   };
 
+  // 🔁 Re-highlight when scenario changes (no re-import)
+  useEffect(() => {
+    if (!viewerRef.current || !scenario?.rawPath?.length) return;
+    const mapping = elementMappingRef.current;
+    if (!mapping) return;
+
+    const ids = convertToActualIds(scenario.rawPath, mapping);
+    highlightPath(viewerRef.current, ids);
+  }, [scenario]);
+
+  // data -> after bpmn ready
   useEffect(() => {
     if (bpmnViewerReady && data?.bpmnXml && containerRef.current && !viewerRef.current) {
       initializeBpmnDiagram(data.bpmnXml, scenario);
@@ -486,63 +422,6 @@ export default function ViewDetailPage() {
       }
     });
     return testDataArray;
-  };
-
-  const extractElementNames = (viewer) => {
-    try {
-      const registry = viewer.get("elementRegistry");
-      const elements = registry.getAll();
-      const nameMap = {};
-      elements.forEach((el) => {
-        nameMap[el.id] = el.businessObject?.name || el.id;
-      });
-      setElementNames(nameMap);
-    } catch {}
-  };
-
-  const highlightPath = (actualIds) => {
-    if (!viewerRef.current || !Array.isArray(actualIds) || actualIds.length === 0) return;
-
-    try {
-      const canvas = viewerRef.current.get("canvas");
-      const registry = viewerRef.current.get("elementRegistry");
-
-      registry.getAll().forEach((el) => {
-        canvas.removeMarker(el.id, "highlight-path");
-        canvas.removeMarker(el.id, "highlight-subprocess");
-      });
-
-      const valid = actualIds
-        .map((id) => {
-          const element = registry.get(id);
-          if (!element) return null;
-          return {
-            id,
-            element,
-            isSubprocessElement: element.parent && element.parent.type === "bpmn:SubProcess",
-          };
-        })
-        .filter(Boolean);
-
-      if (!valid.length) {
-        canvas.zoom("fit-viewport");
-        return;
-      }
-
-      valid.forEach(({ id, isSubprocessElement }) => {
-        const marker = isSubprocessElement ? "highlight-subprocess" : "highlight-path";
-        canvas.addMarker(id, marker);
-      });
-
-      for (let i = 0; i < valid.length - 1; i++) {
-        const flowIds = findFlowIdsBetween(valid[i].id, valid[i + 1].id);
-        flowIds.forEach((fid) => canvas.addMarker(fid, "highlight-path"));
-      }
-
-      canvas.zoom("fit-viewport");
-    } catch (error) {
-      console.warn("Error highlighting path:", error);
-    }
   };
 
   const getActionSteps = (scenarioStep) => {
@@ -601,20 +480,20 @@ export default function ViewDetailPage() {
     setSaving(true);
     try {
       const updatedInputData = {};
-      testDataList.forEach(item => {
-        if (item.type === 'primitive') {
+      testDataList.forEach((item) => {
+        if (item.type === "primitive") {
           updatedInputData[item.id] = item.value;
-        } else if (item.type === 'object') {
+        } else if (item.type === "object") {
           const obj = {};
-          item.value.forEach(prop => {
+          item.value.forEach((prop) => {
             obj[prop.key] = prop.value;
           });
           updatedInputData[item.id] = obj;
-        } else if (item.type === 'array') {
-          const arr = item.value.map(arrItem => {
+        } else if (item.type === "array") {
+          const arr = item.value.map((arrItem) => {
             if (arrItem.properties) {
               const obj = {};
-              arrItem.properties.forEach(prop => {
+              arrItem.properties.forEach((prop) => {
                 obj[prop.key] = prop.value;
               });
               return obj;
@@ -629,7 +508,7 @@ export default function ViewDetailPage() {
         input_data: updatedInputData,
         readable_description: tempDescription,
         scenario_step: scenario.scenario_step,
-        expected_result: scenario.expected_result
+        expected_result: scenario.expected_result,
       });
 
       setScenario((prev) => ({ ...prev, readable_description: tempDescription }));
@@ -657,20 +536,20 @@ export default function ViewDetailPage() {
     setSaving(true);
     try {
       const updatedInputData = {};
-      testDataList.forEach(item => {
-        if (item.type === 'primitive') {
+      testDataList.forEach((item) => {
+        if (item.type === "primitive") {
           updatedInputData[item.id] = item.value;
-        } else if (item.type === 'object') {
+        } else if (item.type === "object") {
           const obj = {};
-          item.value.forEach(prop => {
+          item.value.forEach((prop) => {
             obj[prop.key] = prop.value;
           });
           updatedInputData[item.id] = obj;
-        } else if (item.type === 'array') {
-          const arr = item.value.map(arrItem => {
+        } else if (item.type === "array") {
+          const arr = item.value.map((arrItem) => {
             if (arrItem.properties) {
               const obj = {};
-              arrItem.properties.forEach(prop => {
+              arrItem.properties.forEach((prop) => {
                 obj[prop.key] = prop.value;
               });
               return obj;
@@ -685,7 +564,7 @@ export default function ViewDetailPage() {
         input_data: updatedInputData,
         readable_description: scenario.readable_description,
         scenario_step: scenario.scenario_step,
-        expected_result: { ...scenario.expected_result, message: tempExpectedResult }
+        expected_result: { ...scenario.expected_result, message: tempExpectedResult },
       });
 
       setScenario((prev) => ({
@@ -722,20 +601,20 @@ export default function ViewDetailPage() {
         .join("\n");
 
       const updatedInputData = {};
-      testDataList.forEach(item => {
-        if (item.type === 'primitive') {
+      testDataList.forEach((item) => {
+        if (item.type === "primitive") {
           updatedInputData[item.id] = item.value;
-        } else if (item.type === 'object') {
+        } else if (item.type === "object") {
           const obj = {};
-          item.value.forEach(prop => {
+          item.value.forEach((prop) => {
             obj[prop.key] = prop.value;
           });
           updatedInputData[item.id] = obj;
-        } else if (item.type === 'array') {
-          const arr = item.value.map(arrItem => {
+        } else if (item.type === "array") {
+          const arr = item.value.map((arrItem) => {
             if (arrItem.properties) {
               const obj = {};
-              arrItem.properties.forEach(prop => {
+              arrItem.properties.forEach((prop) => {
                 obj[prop.key] = prop.value;
               });
               return obj;
@@ -750,7 +629,7 @@ export default function ViewDetailPage() {
         input_data: updatedInputData,
         readable_description: scenario.readable_description,
         scenario_step: formattedSteps,
-        expected_result: scenario.expected_result
+        expected_result: scenario.expected_result,
       });
 
       setScenario((prev) => ({ ...prev, scenario_step: formattedSteps }));
@@ -787,26 +666,26 @@ export default function ViewDetailPage() {
       navigate("/scenario", { state: { fileId }, replace: true });
       return;
     }
-    
+
     setSaving(true);
     setSaveSuccess(false);
-    
+
     try {
       const updatedInputData = {};
-      testDataList.forEach(item => {
-        if (item.type === 'primitive') {
+      testDataList.forEach((item) => {
+        if (item.type === "primitive") {
           updatedInputData[item.id] = item.value;
-        } else if (item.type === 'object') {
+        } else if (item.type === "object") {
           const obj = {};
-          item.value.forEach(prop => {
+          item.value.forEach((prop) => {
             obj[prop.key] = prop.value;
           });
           updatedInputData[item.id] = obj;
-        } else if (item.type === 'array') {
-          const arr = item.value.map(arrItem => {
+        } else if (item.type === "array") {
+          const arr = item.value.map((arrItem) => {
             if (arrItem.properties) {
               const obj = {};
-              arrItem.properties.forEach(prop => {
+              arrItem.properties.forEach((prop) => {
                 obj[prop.key] = prop.value;
               });
               return obj;
@@ -821,14 +700,13 @@ export default function ViewDetailPage() {
         input_data: updatedInputData,
         readable_description: scenario.readable_description,
         scenario_step: scenario.scenario_step,
-        expected_result: scenario.expected_result
+        expected_result: scenario.expected_result,
       });
 
       setOriginalTestData(JSON.parse(JSON.stringify(testDataList)));
       setEditingTestData(false);
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2500);
-      
     } catch (err) {
       alert("Save failed: " + err.message);
       setSaveSuccess(false);
@@ -888,7 +766,7 @@ export default function ViewDetailPage() {
     window.URL.revokeObjectURL(url);
   };
 
-  // Render test data item
+  // Render test data item (edit & view)
   const renderTestDataItem = (item, index) => {
     if (editingTestData) {
       if (item.type === "primitive") {
@@ -1272,8 +1150,7 @@ export default function ViewDetailPage() {
                 {!editingDescription ? (
                   <div className="bg-gray-50 rounded-lg p-6 border border-gray-200">
                     <p className="text-gray-700 leading-relaxed">
-                      {scenario?.readable_description ||
-                        "Lorem ipsum is simply dummy text of the printing and typesetting industry."}
+                      {scenario?.readable_description || "Lorem ipsum is simply dummy text of the printing and typesetting industry."}
                     </p>
                   </div>
                 ) : (
@@ -1286,14 +1163,14 @@ export default function ViewDetailPage() {
                       placeholder="Enter scenario description..."
                     />
                     <div className="flex space-x-3">
-                      <Button 
-                        onClick={handleSaveDescription} 
+                      <Button
+                        onClick={handleSaveDescription}
                         disabled={saving}
                         className="flex items-center space-x-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors text-sm"
                         style={{ opacity: saving ? 0.6 : 1 }}
                       >
                         <Save className="w-4 h-4" />
-                        <span>{saving ? 'Saving...' : 'Save Changes'}</span>
+                        <span>{saving ? "Saving..." : "Save Changes"}</span>
                       </Button>
                       <Button onClick={handleCancelDescription} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors text-sm">
                         Cancel
@@ -1363,14 +1240,14 @@ export default function ViewDetailPage() {
                     </button>
 
                     <div className="flex space-x-3 pt-2 border-t border-gray-200">
-                      <Button 
-                        onClick={handleSaveActionSteps} 
+                      <Button
+                        onClick={handleSaveActionSteps}
                         disabled={saving}
                         className="flex items-center space-x-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors text-sm"
                         style={{ opacity: saving ? 0.6 : 1 }}
                       >
                         <Save className="w-4 h-4" />
-                        <span>{saving ? 'Saving...' : 'Save Changes'}</span>
+                        <span>{saving ? "Saving..." : "Save Changes"}</span>
                       </Button>
                       <Button onClick={handleCancelActionSteps} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors text-sm">
                         Cancel
@@ -1466,20 +1343,20 @@ export default function ViewDetailPage() {
                           setSaving(true);
                           try {
                             const updatedInputData = {};
-                            testDataList.forEach(item => {
-                              if (item.type === 'primitive') {
+                            testDataList.forEach((item) => {
+                              if (item.type === "primitive") {
                                 updatedInputData[item.id] = item.value;
-                              } else if (item.type === 'object') {
+                              } else if (item.type === "object") {
                                 const obj = {};
-                                item.value.forEach(prop => {
+                                item.value.forEach((prop) => {
                                   obj[prop.key] = prop.value;
                                 });
                                 updatedInputData[item.id] = obj;
-                              } else if (item.type === 'array') {
-                                const arr = item.value.map(arrItem => {
+                              } else if (item.type === "array") {
+                                const arr = item.value.map((arrItem) => {
                                   if (arrItem.properties) {
                                     const obj = {};
-                                    arrItem.properties.forEach(prop => {
+                                    arrItem.properties.forEach((prop) => {
                                       obj[prop.key] = prop.value;
                                     });
                                     return obj;
@@ -1494,7 +1371,7 @@ export default function ViewDetailPage() {
                               input_data: updatedInputData,
                               readable_description: scenario.readable_description,
                               scenario_step: scenario.scenario_step,
-                              expected_result: scenario.expected_result
+                              expected_result: scenario.expected_result,
                             });
 
                             setEditingTestData(false);
@@ -1502,17 +1379,17 @@ export default function ViewDetailPage() {
                             setSaveSuccess(true);
                             setTimeout(() => setSaveSuccess(false), 2500);
                           } catch (error) {
-                            alert('Failed to save: ' + error.message);
+                            alert("Failed to save: " + error.message);
                           } finally {
                             setSaving(false);
                           }
                         }}
                         disabled={saving}
                         className="flex items-center space-x-2 bg-[#2185D5] hover:bg-[#1D5D9B] text-white px-6 py-2 rounded-lg transition-colors text-sm"
-                        style={{ opacity: saving ? 0.6 : 1, cursor: saving ? 'not-allowed' : 'pointer' }}
+                        style={{ opacity: saving ? 0.6 : 1, cursor: saving ? "not-allowed" : "pointer" }}
                       >
                         <Save className="w-4 h-4" />
-                        <span>{saving ? 'Saving...' : 'Save Test Data'}</span>
+                        <span>{saving ? "Saving..." : "Save Test Data"}</span>
                       </Button>
                     </div>
                   </div>
@@ -1548,14 +1425,14 @@ export default function ViewDetailPage() {
                       placeholder="Enter expected result..."
                     />
                     <div className="flex space-x-3">
-                      <Button 
-                        onClick={handleSaveExpectedResult} 
+                      <Button
+                        onClick={handleSaveExpectedResult}
                         disabled={saving}
                         className="flex items-center space-x-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors text-sm"
                         style={{ opacity: saving ? 0.6 : 1 }}
                       >
                         <Save className="w-4 h-4" />
-                        <span>{saving ? 'Saving...' : 'Save Changes'}</span>
+                        <span>{saving ? "Saving..." : "Save Changes"}</span>
                       </Button>
                       <Button onClick={handleCancelExpectedResult} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors text-sm">
                         Cancel
@@ -1615,205 +1492,104 @@ export default function ViewDetailPage() {
       />
 
       <style>{`
-  /* ===== Z-INDEX HIERARCHY ===== */
-  .djs-element[data-element-id*="Lane"],
-  .djs-element[data-element-id*="Participant"],
-  .djs-element[class*="Lane"],
-  .djs-element[class*="Participant"] {
-    z-index: 1 !important;
-  }
+ /* ===== Layout dasar ===== */
+.djs-container { width: 100% !important; height: 100% !important; }
 
-  .djs-element[data-element-id*="Task"],
-  .djs-element[data-element-id*="Activity"],
-  .djs-element[data-element-id*="Event"],
-  .djs-element[data-element-id*="Gateway"],
-  .djs-element[class*="Task"],
-  .djs-element[class*="Activity"],
-  .djs-element[class*="Event"],
-  .djs-element[class*="Gateway"] {
-    z-index: 10 !important;
-  }
+/* Z-index */
+.djs-element[data-element-id*="Lane"],
+.djs-element[data-element-id*="Participant"],
+.djs-element[class*="Lane"],
+.djs-element[class*="Participant"] { z-index: 1 !important; }
 
-  .djs-element.highlight-path,
-  .djs-element.highlight-subprocess {
-    z-index: 10000 !important;
-    position: relative;
-  }
+.djs-element[data-element-id*="Task"],
+.djs-element[data-element-id*="Activity"],
+.djs-element[data-element-id*="Event"],
+.djs-element[data-element-id*="Gateway"],
+.djs-element[class*="Task"],
+.djs-element[class*="Activity"],
+.djs-element[class*="Event"],
+.djs-element[class*="Gateway"] { z-index: 10 !important; }
 
-  .djs-connection.highlight-path {
-    z-index: 9999 !important;
-  }
+.djs-element.highlight-path,
+.djs-element.highlight-subprocess { z-index: 10000 !important; position: relative; }
+.djs-connection.highlight-path { z-index: 9999 !important; }
 
-  /* ===== TEXT RESET ===== */
-  .djs-label text, 
-  .djs-visual text {
-    stroke: none !important;
-    stroke-width: 0 !important;
-    paint-order: normal !important;
-    font-weight: normal !important;
-    fill: black !important;
-    font-family: Arial, sans-serif !important;
-    font-size: 12px !important;
-  }
+/* Text reset & di atas shape */
+.djs-label text, .djs-visual text {
+  stroke: none !important; stroke-width: 0 !important; paint-order: normal !important;
+  font-weight: normal !important; fill: black !important; font-family: Arial, sans-serif !important; font-size: 12px !important;
+}
+.djs-label { z-index: 100001 !important; pointer-events: none !important; }
+.highlight-path .djs-label, .highlight-subprocess .djs-label { z-index: 100002 !important; }
 
-  /* ===== TEXT PADA HIGHLIGHTED ELEMENT ===== */
-  .djs-element.highlight-path .djs-label text,
-  .djs-element.highlight-subprocess .djs-label text {
-    stroke: none !important;
-    font-weight: normal !important;
-    fill: black !important;
-  }
+/* EVENTS */
+.djs-element.highlight-path .djs-visual > circle {
+  fill: #98E9DD !important; stroke: #000000 !important; stroke-width: 2 !important;
+}
+/* Ikon di dalam event (amplop, dsb) tetap kontras */
+.djs-element.highlight-path .djs-visual > path {
+  stroke: #000000 !important; stroke-width: 1.5px !important; fill: none;
+}
 
-  /* ===== ENSURE TEXT APPEARS ABOVE SHAPES ===== */
-  .djs-label {
-    z-index: 100001 !important;
-    pointer-events: none !important;
-  }
+/* TASKS */
+.djs-element.highlight-path .djs-visual > rect {
+  fill: #FFFFBD !important; stroke: #000000 !important; stroke-width: 2 !important;
+}
 
-  .highlight-path .djs-label,
-  .highlight-subprocess .djs-label {
-    z-index: 100002 !important;
-  }
+/* GATEWAYS */
+.djs-element.highlight-path .djs-visual > polygon,
+.djs-element.highlight-path .djs-visual > circle {
+  fill: #E0E0E0 !important; stroke: #000000 !important; stroke-width: 2 !important;
+}
 
-  /* ===== EVENTS - #98E9DD ===== */
-  .djs-element.highlight-path[data-element-id*="StartEvent"] .djs-visual > circle,
-  .djs-element.highlight-path[data-element-id*="EndEvent"] .djs-visual > circle,
-  .djs-element.highlight-path[data-element-id*="Event_"] .djs-visual > circle,
-  .djs-element.highlight-path[data-element-id*="IntermediateCatchEvent"] .djs-visual > circle,
-  .djs-element.highlight-path[data-element-id*="IntermediateThrowEvent"] .djs-visual > circle,
-  .djs-element.highlight-path[data-element-id*="BoundaryEvent"] .djs-visual > circle,
-  .djs-element.highlight-path[class*="StartEvent"] .djs-visual > circle,
-  .djs-element.highlight-path[class*="EndEvent"] .djs-visual > circle,
-  .djs-element.highlight-path[class*="IntermediateEvent"] .djs-visual > circle,
-  .djs-element.highlight-path[class*="BoundaryEvent"] .djs-visual > circle {
-    fill: #98E9DD !important;
-    stroke: #000000 !important;
-    stroke-width: 2 !important;
-  }
+/* SUBPROCESS container */
+.djs-element.highlight-subprocess .djs-visual > rect,
+.djs-element.highlight-subprocess .djs-visual > circle,
+.djs-element.highlight-subprocess .djs-visual > polygon,
+.djs-element.highlight-subprocess .djs-visual > path {
+  fill: rgba(152, 233, 221, 0.3) !important; stroke: #000 !important; stroke-width: 2 !important;
+}
 
-  /* ===== TASKS - #FFFFBD ===== */
-  .djs-element.highlight-path[data-element-id*="Task"] .djs-visual > rect,
-  .djs-element.highlight-path[data-element-id*="Activity_"] .djs-visual > rect,
-  .djs-element.highlight-path[data-element-id*="UserTask"] .djs-visual > rect,
-  .djs-element.highlight-path[data-element-id*="ServiceTask"] .djs-visual > rect,
-  .djs-element.highlight-path[data-element-id*="ManualTask"] .djs-visual > rect,
-  .djs-element.highlight-path[data-element-id*="ScriptTask"] .djs-visual > rect,
-  .djs-element.highlight-path[data-element-id*="BusinessRuleTask"] .djs-visual > rect,
-  .djs-element.highlight-path[class*="Task"] .djs-visual > rect,
-  .djs-element.highlight-path[class*="Activity"] .djs-visual > rect,
-  .djs-element.highlight-path[class*="UserTask"] .djs-visual > rect,
-  .djs-element.highlight-path[class*="ServiceTask"] .djs-visual > rect {
-    fill: #FFFFBD !important;
-    stroke: #000000 !important;
-    stroke-width: 2 !important;
-  }
+/* CONNECTIONS (sequence & message) */
+.djs-connection.highlight-path .djs-visual > path,
+.djs-connection.highlight-path .djs-visual > polyline {
+  stroke: #000000 !important; stroke-width: 3px !important;
+}
 
-  /* ===== MESSAGE/RECEIVE TASK - #96DF67 ===== */
-  .djs-element.highlight-path[data-element-id*="MessageTask"] .djs-visual > rect,
-  .djs-element.highlight-path[data-element-id*="ReceiveTask"] .djs-visual > rect,
-  .djs-element.highlight-path[data-element-id*="SendTask"] .djs-visual > rect,
-  .djs-element.highlight-path[class*="MessageTask"] .djs-visual > rect,
-  .djs-element.highlight-path[class*="ReceiveTask"] .djs-visual > rect,
-  .djs-element.highlight-path[class*="SendTask"] .djs-visual > rect {
-    fill: #96DF67 !important;
-    stroke: #000000 !important;
-    stroke-width: 2 !important;
-  }
+/* ✅ robust selector untuk MessageFlow (garis putus) */
+.djs-connection.type-bpmn\\:MessageFlow.highlight-path .djs-visual > path {
+  stroke: #000000 !important;
+  stroke-width: 2px !important;
+  stroke-dasharray: 8, 4 !important;
+}
+  /* Timer Event */
+.djs-element.highlight-path[data-element-id*="TimerEvent"] .djs-visual > circle {
+  fill: #FFD580 !important; /* orange */
+  stroke: #000 !important;
+}
 
-  /* ===== GATEWAYS - #E0E0E0 ===== */
-  /* Circle di dalam gateway juga abu-abu */
-.djs-element.highlight-path[data-element-id*="Gateway"] .djs-visual > circle,
-.djs-element.highlight-path[class*="Gateway"] .djs-visual > circle,
-  .djs-element.highlight-path[data-element-id*="Gateway"] .djs-visual > polygon,
-  .djs-element.highlight-path[class*="Gateway"] .djs-visual > polygon,
-  .djs-element.highlight-path[class*="ExclusiveGateway"] .djs-visual > polygon,
-  .djs-element.highlight-path[class*="ParallelGateway"] .djs-visual > polygon,
-  .djs-element.highlight-path[class*="InclusiveGateway"] .djs-visual > polygon {
-    fill: #E0E0E0 !important;
-    stroke: #000000 !important;
-    stroke-width: 2 !important;
-  }
+/* Signal Event */
+.djs-element.highlight-path[data-element-id*="SignalEvent"] .djs-visual > circle {
+  fill: #A5D6A7 !important; /* hijau muda */
+  stroke: #000 !important;
+}
 
-  /* ===== SUBPROCESS ===== */
-  .djs-element.highlight-subprocess .djs-visual > rect,
-  .djs-element.highlight-subprocess .djs-visual > circle,
-  .djs-element.highlight-subprocess .djs-visual > polygon,
-  .djs-element.highlight-subprocess .djs-visual > path {
-    fill: rgba(152, 233, 221, 0.3) !important;
-    stroke: #000000 !important;
-    stroke-width: 2 !important;
-  }
+/* Error Event */
+.djs-element.highlight-path[data-element-id*="ErrorEvent"] .djs-visual > circle {
+  fill: #FF8A80 !important; /* merah muda */
+  stroke: #000 !important;
+}
 
-  .djs-element[data-element-id*="SubProcess"] .djs-visual > rect,
-  .djs-element[class*="SubProcess"] .djs-visual > rect {
-    fill: rgba(255, 255, 255, 0.8) !important;
-    stroke: #ddd !important;
-    stroke-width: 1px !important;
-  }
+/* Call Activity */
+.djs-element.highlight-path[data-element-id*="CallActivity"] .djs-visual > rect {
+  fill: #B3E5FC !important; /* biru muda */
+  stroke: #000 !important;
+}
 
-  .djs-element[data-element-id*="SubProcess"].highlight-subprocess .djs-visual > rect,
-  .djs-element[class*="SubProcess"].highlight-subprocess .djs-visual > rect {
-    fill: rgba(152, 233, 221, 0.15) !important;
-    stroke: #000000 !important;
-    stroke-width: 2px !important;
-  }
 
-  /* ===== CONNECTIONS ===== */
-  .djs-connection.highlight-path .djs-visual > path,
-  .djs-connection.highlight-path .djs-visual > polyline {
-    stroke: #000000 !important;
-    stroke-width: 3px !important;
-  }
-
-  .djs-connection.highlight-path[class*="MessageFlow"] .djs-visual > path {
-    stroke: #000000 !important;
-    stroke-width: 2px !important;
-    stroke-dasharray: 8, 4 !important;
-  }
-
-  /* ===== FALLBACK ===== */
-  .djs-element.highlight-path .djs-visual > circle {
-    fill: #98E9DD !important;
-    stroke: #000000 !important;
-    stroke-width: 2 !important;
-  }
-
-  .djs-element.highlight-path .djs-visual > rect {
-    fill: #FFFFBD !important;
-    stroke: #000000 !important;
-    stroke-width: 2 !important;
-  }
-
-  .djs-element.highlight-path .djs-visual > polygon {
-    fill: #E0E0E0 !important;
-    stroke: #000000 !important;
-    stroke-width: 2 !important;
-  }
-
-  /* ===== VISIBILITY ===== */
-  .djs-element.highlight-path .djs-visual,
-  .djs-element.highlight-subprocess .djs-visual {
-    opacity: 1 !important;
-    visibility: visible !important;
-  }
-
-  .djs-element[data-element-id*="SubProcess"] .djs-visual,
-  .djs-element[class*="SubProcess"] .djs-visual {
-    pointer-events: none;
-  }
-
-  /* ===== DATA OBJECTS & ANNOTATIONS ===== */
-  .djs-element.highlight-path[class*="DataObject"] .djs-visual > path,
-  .djs-element.highlight-path[class*="DataStore"] .djs-visual > path {
-    fill: #E0E0E0 !important;
-    stroke: #000000 !important;
-    stroke-width: 2 !important;
-  }
-
-  .djs-element.highlight-path[class*="TextAnnotation"] .djs-visual > path {
-    stroke: #000000 !important;
-    stroke-width: 1.5 !important;
-  }
+/* Visibility */
+.djs-element.highlight-path .djs-visual,
+.djs-element.highlight-subprocess .djs-visual { opacity: 1 !important; visibility: visible !important; }
 `}</style>
     </div>
   );
