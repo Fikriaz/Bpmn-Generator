@@ -622,17 +622,7 @@ export default function ScenarioPage() {
                                 <span>Detail</span>
                               </Button>
                             </Link>
-                            <Button
-                              size="sm"
-                              className="flex items-center space-x-1 bg-gray-600 hover:bg-gray-700 text-white text-xs px-3 py-2 rounded-md transition-colors duration-200"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDownloadPath(scenario);
-                              }}
-                            >
-                              <Download className="w-3 h-3" />
-                              <span>Download</span>
-                            </Button>
+                     
                           </div>
                         </TableCell>
                       </TableRow>
