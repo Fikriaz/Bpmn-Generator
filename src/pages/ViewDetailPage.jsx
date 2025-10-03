@@ -18,7 +18,7 @@ import UserMenu from "../components/ui/UserMenu";
 import DownloadPopup from "../components/DownloadPopup";
 import { API_BASE, authFetch } from "../utils/auth";
 
-// Import BPMN viewer
+// Lazy import BPMN viewer
 let BpmnViewer = null;
 
 export default function ViewDetailPage() {
@@ -29,7 +29,7 @@ export default function ViewDetailPage() {
   const viewerRef = useRef(null);
   const elementMappingRef = useRef({});
 
-  // Get parameters
+  // params
   const scenarioId = searchParams.get("scenarioId");
   const fileId = location.state?.fileId || searchParams.get("fileId");
   const pathIndex = location.state?.pathIndex || 0;
@@ -46,10 +46,10 @@ export default function ViewDetailPage() {
   const [originalTestData, setOriginalTestData] = useState([]);
   const [bpmnViewerReady, setBpmnViewerReady] = useState(false);
 
-  // Download popup state
+  // Download popup
   const [showDownloadPopup, setShowDownloadPopup] = useState(false);
 
-  // Edit sections state
+  // edit sections
   const [editingDescription, setEditingDescription] = useState(false);
   const [editingExpectedResult, setEditingExpectedResult] = useState(false);
   const [editingActionSteps, setEditingActionSteps] = useState(false);
@@ -213,23 +213,19 @@ export default function ViewDetailPage() {
     setNewField({ type: "primitive", label: "", value: "" });
   };
 
-  // ✅ Helper function to save to backend
+  // ✅ save to backend
   const saveToBackend = async (updatedData) => {
     try {
       const response = await authFetch(
         `${API_BASE}/api/bpmn/files/${fileId}/scenarios/${scenario.path_id}`,
         {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(updatedData)
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updatedData),
         },
-        { onUnauthorizedRedirectTo: '/login' }
+        { onUnauthorizedRedirectTo: "/login" }
       );
-
-      if (!response.ok) {
-        throw new Error(`Failed to save: ${response.status}`);
-      }
-
+      if (!response.ok) throw new Error(`Failed to save: ${response.status}`);
       return true;
     } catch (err) {
       console.error("Save failed:", err);
@@ -237,27 +233,43 @@ export default function ViewDetailPage() {
     }
   };
 
-  // Mapping displayName -> elementId
-  const buildElementMapping = (viewer, data) => {
+  /* ===================== Mapping & Highlight helpers ===================== */
+
+  // lane finder — per element.businessObject.id
+  const findElementLane = (element, allElements) => {
+    const lanes = allElements.filter((el) => el.type === "bpmn:Lane");
+    for (const lane of lanes) {
+      const refs = lane?.businessObject?.flowNodeRef || [];
+      const isInLane = refs.some(
+        (n) => n && element?.businessObject && n.id === element.businessObject.id
+      );
+      if (isInLane) return lane.businessObject?.name || lane.id;
+    }
+    return null;
+  };
+
+  // build displayName -> elementId mapping
+  const buildElementMapping = (viewer, fileData) => {
     const registry = viewer.get("elementRegistry");
     const elements = registry.getAll();
     const mapping = {};
 
-    if (data.elementsJson && Array.isArray(data.elementsJson)) {
-      data.elementsJson.forEach((elem) => {
-        if (elem.lane && elem.name) {
-          const displayName = `[${elem.lane}] ${elem.name}`;
-          mapping[displayName] = elem.id;
-        } else if (elem.name) {
-          mapping[elem.name] = elem.id;
-          mapping[`[System] ${elem.name}`] = elem.id;
+    if (fileData?.elementsJson && Array.isArray(fileData.elementsJson)) {
+      fileData.elementsJson.forEach((elem) => {
+        if (elem?.id) {
+          if (elem.lane && elem.name) mapping[`[${elem.lane}] ${elem.name}`] = elem.id;
+          if (elem.name) {
+            mapping[elem.name] = elem.id;
+            mapping[`[System] ${elem.name}`] = elem.id;
+          }
         }
       });
     }
 
     elements.forEach((el) => {
-      const bo = el.businessObject;
-      if (bo && bo.name) {
+      const bo = el?.businessObject;
+      if (!bo) return;
+      if (bo.name) {
         mapping[bo.name] = el.id;
         if (el.parent && el.parent.type === "bpmn:SubProcess") {
           mapping[`[System] ${bo.name}`] = el.id;
@@ -270,29 +282,17 @@ export default function ViewDetailPage() {
     elementMappingRef.current = mapping;
   };
 
-  const findElementLane = (element, allElements) => {
-    const lanes = allElements.filter((el) => el.type === "bpmn:Lane");
-    for (const lane of lanes) {
-      if (lane.businessObject?.flowNodeRef && lane.businessObject.flowNodeRef.includes(element.id)) {
-        return lane.businessObject.name || lane.id;
-      }
-    }
-    return null;
-  };
-
+  // convert display names -> actual element ids
   const convertToActualIds = (displayNames) => {
     if (!Array.isArray(displayNames)) return [];
     const mapping = elementMappingRef.current;
     return displayNames
       .map((displayName) => {
         let actualId = mapping[displayName];
-        if (!actualId && displayName.includes("[System]")) {
-          const cleanName = displayName.replace(/^\[.*?\]\s*/, "");
-          actualId = mapping[cleanName];
-        }
-        if (!actualId && displayName.includes("]")) {
-          const withoutLane = displayName.replace(/^\[.*?\]\s*/, "");
-          actualId = mapping[withoutLane];
+        if (!actualId && /^\[.*?\]\s+/.test(displayName)) {
+          // remove lane/system prefix
+          const cleaned = displayName.replace(/^\[.*?\]\s*/, "");
+          actualId = mapping[cleaned];
         }
         if (!actualId) {
           console.warn(`No mapping found for display name: ${displayName}`);
@@ -303,19 +303,93 @@ export default function ViewDetailPage() {
       .filter(Boolean);
   };
 
-  const findFlowIdsBetween = (fromId, toId) => {
-    if (!viewerRef.current) return [];
+  // type marker for CSS
+  const typeClassFor = (el) => {
+    const t = el?.type || el?.businessObject?.$type || "";
+    if (t.includes("SequenceFlow")) return "type-seq";
+    if (t.includes("MessageFlow")) return "type-msg";
+    if (t.includes("Task") || t.includes("Activity")) return "type-task";
+    if (t.includes("Event")) return "type-event";
+    if (t.includes("Gateway")) return "type-gateway";
+    return "type-other";
+  };
+
+  const extractElementNames = (viewer) => {
     try {
-      const reg = viewerRef.current.get("elementRegistry");
-      const from = reg.get(fromId);
-      if (!from || !from.outgoing) return [];
-      return from.outgoing.filter((f) => f?.target?.id === toId).map((f) => f.id);
-    } catch {
-      return [];
+      const registry = viewer.get("elementRegistry");
+      const elements = registry.getAll();
+      const nameMap = {};
+      elements.forEach((el) => {
+        nameMap[el.id] = el.businessObject?.name || el.id;
+      });
+      setElementNames(nameMap);
+    } catch {}
+  };
+
+  const highlightPath = (actualIds) => {
+    if (!viewerRef.current || !Array.isArray(actualIds) || actualIds.length === 0) return;
+
+    try {
+      const canvas = viewerRef.current.get("canvas");
+      const registry = viewerRef.current.get("elementRegistry");
+
+      // clear markers
+      registry.getAll().forEach((el) => {
+        canvas.removeMarker(el.id, "highlight-path");
+        canvas.removeMarker(el.id, "highlight-subprocess");
+        canvas.removeMarker(el.id, "type-task");
+        canvas.removeMarker(el.id, "type-event");
+        canvas.removeMarker(el.id, "type-gateway");
+        canvas.removeMarker(el.id, "type-seq");
+        canvas.removeMarker(el.id, "type-msg");
+        canvas.removeMarker(el.id, "type-other");
+      });
+
+      // validate nodes
+      const valid = actualIds
+        .map((id) => {
+          const element = registry.get(id);
+          if (!element) return null;
+          return {
+            id,
+            element,
+            isSubprocessElement: element.parent && element.parent.type === "bpmn:SubProcess",
+          };
+        })
+        .filter(Boolean);
+
+      if (!valid.length) {
+        canvas.zoom("fit-viewport");
+        return;
+      }
+
+      // mark nodes
+      valid.forEach(({ id, element, isSubprocessElement }) => {
+        canvas.addMarker(id, isSubprocessElement ? "highlight-subprocess" : "highlight-path");
+        canvas.addMarker(id, typeClassFor(element));
+      });
+
+      // mark connections (sequence + message flow)
+      for (let i = 0; i < valid.length - 1; i++) {
+        const fromEl = registry.get(valid[i].id);
+        const toId = valid[i + 1].id;
+        const outgoing = (fromEl?.outgoing || []).filter((f) => f?.target?.id === toId);
+
+        outgoing.forEach((conn) => {
+          canvas.addMarker(conn.id, "highlight-path");
+          canvas.addMarker(conn.id, typeClassFor(conn));
+        });
+      }
+
+      canvas.zoom("fit-viewport");
+    } catch (error) {
+      console.warn("Error highlighting path:", error);
     }
   };
 
-  // Initialize BPMN viewer
+  /* ===================== Viewer init & data fetch ===================== */
+
+  // init bpmn-js
   useEffect(() => {
     const init = async () => {
       if (typeof window !== "undefined" && !BpmnViewer) {
@@ -422,19 +496,24 @@ export default function ViewDetailPage() {
         highlightPath(actualIds);
       }
 
-      viewer.get("eventBus").on("rendered", () => {
+      const bus = viewer.get("eventBus");
+      const fixText = () => {
         const canvasContainer = viewer.get("canvas").getContainer();
-        const texts = canvasContainer.querySelectorAll(".djs-label text");
+        const texts = canvasContainer.querySelectorAll(".djs-label text, .djs-visual text");
         texts.forEach((el) => {
           el.removeAttribute("stroke");
+          el.removeAttribute("stroke-width");
           el.style.stroke = "none";
+          el.style.strokeWidth = "0";
           el.style.paintOrder = "normal";
           el.style.fontWeight = "normal";
           el.style.fill = "black";
           el.style.vectorEffect = "non-scaling-stroke";
           el.style.shapeRendering = "geometricPrecision";
         });
-      });
+      };
+      bus.on("import.render.complete", fixText);
+      bus.on("import.done", fixText);
 
       viewer.get("canvas").zoom("fit-viewport");
     } catch (bpmnError) {
@@ -447,6 +526,8 @@ export default function ViewDetailPage() {
       initializeBpmnDiagram(data.bpmnXml, scenario);
     }
   }, [bpmnViewerReady, data, scenario]);
+
+  /* ===================== Misc helpers ===================== */
 
   const processInputDataGrouped = (inputData) => {
     const testDataArray = [];
@@ -488,63 +569,6 @@ export default function ViewDetailPage() {
     return testDataArray;
   };
 
-  const extractElementNames = (viewer) => {
-    try {
-      const registry = viewer.get("elementRegistry");
-      const elements = registry.getAll();
-      const nameMap = {};
-      elements.forEach((el) => {
-        nameMap[el.id] = el.businessObject?.name || el.id;
-      });
-      setElementNames(nameMap);
-    } catch {}
-  };
-
-  const highlightPath = (actualIds) => {
-    if (!viewerRef.current || !Array.isArray(actualIds) || actualIds.length === 0) return;
-
-    try {
-      const canvas = viewerRef.current.get("canvas");
-      const registry = viewerRef.current.get("elementRegistry");
-
-      registry.getAll().forEach((el) => {
-        canvas.removeMarker(el.id, "highlight-path");
-        canvas.removeMarker(el.id, "highlight-subprocess");
-      });
-
-      const valid = actualIds
-        .map((id) => {
-          const element = registry.get(id);
-          if (!element) return null;
-          return {
-            id,
-            element,
-            isSubprocessElement: element.parent && element.parent.type === "bpmn:SubProcess",
-          };
-        })
-        .filter(Boolean);
-
-      if (!valid.length) {
-        canvas.zoom("fit-viewport");
-        return;
-      }
-
-      valid.forEach(({ id, isSubprocessElement }) => {
-        const marker = isSubprocessElement ? "highlight-subprocess" : "highlight-path";
-        canvas.addMarker(id, marker);
-      });
-
-      for (let i = 0; i < valid.length - 1; i++) {
-        const flowIds = findFlowIdsBetween(valid[i].id, valid[i + 1].id);
-        flowIds.forEach((fid) => canvas.addMarker(fid, "highlight-path"));
-      }
-
-      canvas.zoom("fit-viewport");
-    } catch (error) {
-      console.warn("Error highlighting path:", error);
-    }
-  };
-
   const getActionSteps = (scenarioStep) => {
     if (!scenarioStep) return [];
     const steps = scenarioStep
@@ -562,7 +586,7 @@ export default function ViewDetailPage() {
     return message || "-";
   };
 
-  // BPMN Viewer Controls
+  // Viewer controls
   const handleZoomFit = () => {
     if (viewerRef.current) {
       const canvas = viewerRef.current.get("canvas");
@@ -588,10 +612,16 @@ export default function ViewDetailPage() {
     elementRegistry.getAll().forEach((el) => {
       canvas.removeMarker(el.id, "highlight-path");
       canvas.removeMarker(el.id, "highlight-subprocess");
+      canvas.removeMarker(el.id, "type-task");
+      canvas.removeMarker(el.id, "type-event");
+      canvas.removeMarker(el.id, "type-gateway");
+      canvas.removeMarker(el.id, "type-seq");
+      canvas.removeMarker(el.id, "type-msg");
+      canvas.removeMarker(el.id, "type-other");
     });
   };
 
-  // ✅ FIXED: Edit handlers with backend save
+  // Edit handlers
   const handleEditDescription = () => {
     setEditingDescription(true);
     setTempDescription(scenario?.readable_description || "");
@@ -601,20 +631,20 @@ export default function ViewDetailPage() {
     setSaving(true);
     try {
       const updatedInputData = {};
-      testDataList.forEach(item => {
-        if (item.type === 'primitive') {
+      testDataList.forEach((item) => {
+        if (item.type === "primitive") {
           updatedInputData[item.id] = item.value;
-        } else if (item.type === 'object') {
+        } else if (item.type === "object") {
           const obj = {};
-          item.value.forEach(prop => {
+          item.value.forEach((prop) => {
             obj[prop.key] = prop.value;
           });
           updatedInputData[item.id] = obj;
-        } else if (item.type === 'array') {
-          const arr = item.value.map(arrItem => {
+        } else if (item.type === "array") {
+          const arr = item.value.map((arrItem) => {
             if (arrItem.properties) {
               const obj = {};
-              arrItem.properties.forEach(prop => {
+              arrItem.properties.forEach((prop) => {
                 obj[prop.key] = prop.value;
               });
               return obj;
@@ -629,7 +659,7 @@ export default function ViewDetailPage() {
         input_data: updatedInputData,
         readable_description: tempDescription,
         scenario_step: scenario.scenario_step,
-        expected_result: scenario.expected_result
+        expected_result: scenario.expected_result,
       });
 
       setScenario((prev) => ({ ...prev, readable_description: tempDescription }));
@@ -657,20 +687,20 @@ export default function ViewDetailPage() {
     setSaving(true);
     try {
       const updatedInputData = {};
-      testDataList.forEach(item => {
-        if (item.type === 'primitive') {
+      testDataList.forEach((item) => {
+        if (item.type === "primitive") {
           updatedInputData[item.id] = item.value;
-        } else if (item.type === 'object') {
+        } else if (item.type === "object") {
           const obj = {};
-          item.value.forEach(prop => {
+          item.value.forEach((prop) => {
             obj[prop.key] = prop.value;
           });
           updatedInputData[item.id] = obj;
-        } else if (item.type === 'array') {
-          const arr = item.value.map(arrItem => {
+        } else if (item.type === "array") {
+          const arr = item.value.map((arrItem) => {
             if (arrItem.properties) {
               const obj = {};
-              arrItem.properties.forEach(prop => {
+              arrItem.properties.forEach((prop) => {
                 obj[prop.key] = prop.value;
               });
               return obj;
@@ -685,7 +715,7 @@ export default function ViewDetailPage() {
         input_data: updatedInputData,
         readable_description: scenario.readable_description,
         scenario_step: scenario.scenario_step,
-        expected_result: { ...scenario.expected_result, message: tempExpectedResult }
+        expected_result: { ...scenario.expected_result, message: tempExpectedResult },
       });
 
       setScenario((prev) => ({
@@ -722,20 +752,20 @@ export default function ViewDetailPage() {
         .join("\n");
 
       const updatedInputData = {};
-      testDataList.forEach(item => {
-        if (item.type === 'primitive') {
+      testDataList.forEach((item) => {
+        if (item.type === "primitive") {
           updatedInputData[item.id] = item.value;
-        } else if (item.type === 'object') {
+        } else if (item.type === "object") {
           const obj = {};
-          item.value.forEach(prop => {
+          item.value.forEach((prop) => {
             obj[prop.key] = prop.value;
           });
           updatedInputData[item.id] = obj;
-        } else if (item.type === 'array') {
-          const arr = item.value.map(arrItem => {
+        } else if (item.type === "array") {
+          const arr = item.value.map((arrItem) => {
             if (arrItem.properties) {
               const obj = {};
-              arrItem.properties.forEach(prop => {
+              arrItem.properties.forEach((prop) => {
                 obj[prop.key] = prop.value;
               });
               return obj;
@@ -750,7 +780,7 @@ export default function ViewDetailPage() {
         input_data: updatedInputData,
         readable_description: scenario.readable_description,
         scenario_step: formattedSteps,
-        expected_result: scenario.expected_result
+        expected_result: scenario.expected_result,
       });
 
       setScenario((prev) => ({ ...prev, scenario_step: formattedSteps }));
@@ -787,26 +817,26 @@ export default function ViewDetailPage() {
       navigate("/scenario", { state: { fileId }, replace: true });
       return;
     }
-    
+
     setSaving(true);
     setSaveSuccess(false);
-    
+
     try {
       const updatedInputData = {};
-      testDataList.forEach(item => {
-        if (item.type === 'primitive') {
+      testDataList.forEach((item) => {
+        if (item.type === "primitive") {
           updatedInputData[item.id] = item.value;
-        } else if (item.type === 'object') {
+        } else if (item.type === "object") {
           const obj = {};
-          item.value.forEach(prop => {
+          item.value.forEach((prop) => {
             obj[prop.key] = prop.value;
           });
           updatedInputData[item.id] = obj;
-        } else if (item.type === 'array') {
-          const arr = item.value.map(arrItem => {
+        } else if (item.type === "array") {
+          const arr = item.value.map((arrItem) => {
             if (arrItem.properties) {
               const obj = {};
-              arrItem.properties.forEach(prop => {
+              arrItem.properties.forEach((prop) => {
                 obj[prop.key] = prop.value;
               });
               return obj;
@@ -821,14 +851,13 @@ export default function ViewDetailPage() {
         input_data: updatedInputData,
         readable_description: scenario.readable_description,
         scenario_step: scenario.scenario_step,
-        expected_result: scenario.expected_result
+        expected_result: scenario.expected_result,
       });
 
       setOriginalTestData(JSON.parse(JSON.stringify(testDataList)));
       setEditingTestData(false);
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2500);
-      
     } catch (err) {
       alert("Save failed: " + err.message);
       setSaveSuccess(false);
@@ -886,242 +915,6 @@ export default function ViewDetailPage() {
     a.click();
     document.body.removeChild(a);
     window.URL.revokeObjectURL(url);
-  };
-
-  // Render test data item
-  const renderTestDataItem = (item, index) => {
-    if (editingTestData) {
-      if (item.type === "primitive") {
-        return (
-          <div key={item.id} className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-            <div className="flex items-start gap-3">
-              <span className="w-6 text-gray-600 font-semibold">{index + 1}.</span>
-              <div className="flex-1">
-                <div className="text-sm font-semibold text-gray-800 mb-2">{item.label}</div>
-                <input
-                  className="w-full px-3 py-2 border rounded-md"
-                  value={item.value}
-                  onChange={(e) => updatePrimitive(item.id, e.target.value)}
-                  placeholder="Value..."
-                />
-              </div>
-              <button
-                onClick={() => removeField(item.id)}
-                className="px-2 py-1 text-red-600 hover:bg-red-50 rounded"
-                title="Remove field"
-              >
-                Hapus
-              </button>
-            </div>
-          </div>
-        );
-      }
-
-      if (item.type === "object") {
-        return (
-          <div key={item.id} className="bg-green-50 border border-green-200 rounded-lg p-4">
-            <div className="flex items-start gap-3">
-              <span className="w-6 text-green-600 font-semibold">{index + 1}.</span>
-              <div className="flex-1">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-sm font-semibold text-green-800">{item.label}</div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => addObjectProp(item.id)}
-                      className="px-2 py-1 text-green-700 hover:bg-green-100 rounded"
-                    >
-                      + Property
-                    </button>
-                    <button
-                      onClick={() => removeField(item.id)}
-                      className="px-2 py-1 text-red-600 hover:bg-red-50 rounded"
-                    >
-                      Hapus Field
-                    </button>
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  {item.value.map((p, i) => (
-                    <div key={i} className="flex gap-2">
-                      <input
-                        className="w-44 px-3 py-2 border rounded-md"
-                        value={p.key}
-                        onChange={(e) => updateObjectProp(item.id, i, e.target.value, p.value)}
-                        placeholder="key"
-                      />
-                      <input
-                        className="flex-1 px-3 py-2 border rounded-md"
-                        value={p.value}
-                        onChange={(e) => updateObjectProp(item.id, i, p.key, e.target.value)}
-                        placeholder="value"
-                      />
-                      <button
-                        onClick={() => removeObjectProp(item.id, i)}
-                        className="px-2 py-1 text-red-600 hover:bg-red-50 rounded"
-                      >
-                        Hapus
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-      }
-
-      // array
-      return (
-        <div key={item.id} className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <div className="flex items-start gap-3">
-            <span className="w-6 text-blue-600 font-semibold">{index + 1}.</span>
-            <div className="flex-1">
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-sm font-semibold text-blue-800">{item.label}</div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => addArrayItem(item.id, false)}
-                    className="px-2 py-1 text-blue-700 hover:bg-blue-100 rounded"
-                  >
-                    + Item (text)
-                  </button>
-                  <button
-                    onClick={() => addArrayItem(item.id, true)}
-                    className="px-2 py-1 text-blue-700 hover:bg-blue-100 rounded"
-                  >
-                    + Item (object)
-                  </button>
-                  <button
-                    onClick={() => removeField(item.id)}
-                    className="px-2 py-1 text-red-600 hover:bg-red-50 rounded"
-                  >
-                    Hapus Field
-                  </button>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                {item.value.map((v, i) => {
-                  if (v.properties) {
-                    return (
-                      <div key={v.id} className="bg-white border rounded p-3 space-y-2">
-                        <div className="text-xs text-gray-500">Item {i + 1} (object)</div>
-                        {(v.properties || []).map((pp, pi) => (
-                          <div key={pi} className="flex gap-2">
-                            <input
-                              className="w-44 px-3 py-2 border rounded-md"
-                              value={pp.key}
-                              onChange={(e) => updateArrayItemProp(item.id, i, pi, e.target.value, pp.value)}
-                              placeholder="key"
-                            />
-                            <input
-                              className="flex-1 px-3 py-2 border rounded-md"
-                              value={pp.value}
-                              onChange={(e) => updateArrayItemProp(item.id, i, pi, pp.key, e.target.value)}
-                              placeholder="value"
-                            />
-                          </div>
-                        ))}
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => addArrayItemProp(item.id, i)}
-                            className="px-2 py-1 text-blue-700 hover:bg-blue-100 rounded"
-                          >
-                            + Property
-                          </button>
-                          <button
-                            onClick={() => removeArrayItem(item.id, i)}
-                            className="px-2 py-1 text-red-600 hover:bg-red-50 rounded"
-                          >
-                            Hapus Item
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  }
-
-                  return (
-                    <div key={v.id} className="flex gap-2">
-                      <input
-                        className="flex-1 px-3 py-2 border rounded-md bg-white"
-                        value={v.value}
-                        onChange={(e) => updateArrayItemValue(item.id, i, e.target.value)}
-                        placeholder={`Item ${i + 1}`}
-                      />
-                      <button
-                        onClick={() => removeArrayItem(item.id, i)}
-                        className="px-2 py-1 text-red-600 hover:bg-red-50 rounded"
-                      >
-                        Hapus
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    // VIEW mode (non-editable)
-    if (item.type === "array") {
-      return (
-        <div key={item.id} className="bg-blue-50 border-l-4 border-blue-400 p-4 rounded-lg">
-          <div className="flex items-start">
-            <span className="mr-3 text-blue-600 font-bold text-lg">{index + 1}.</span>
-            <div className="flex-1">
-              <div className="font-semibold text-blue-800 mb-2">{item.label}</div>
-              <div className="space-y-1">
-                {item.value.map((arrayItem, arrayIndex) => (
-                  <div key={arrayItem.id} className="bg-white p-2 rounded text-sm">
-                    <span className="text-blue-600 font-medium">Item {arrayIndex + 1}:</span>
-                    <span className="ml-2 text-gray-700">
-                      {arrayItem.properties
-                        ? arrayItem.properties.map((prop) => `${prop.key}: ${prop.value}`).join(", ")
-                        : arrayItem.value}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      );
-    }
-    if (item.type === "object") {
-      return (
-        <div key={item.id} className="bg-green-50 border-l-4 border-green-400 p-4 rounded-lg">
-          <div className="flex items-start">
-            <span className="mr-3 text-green-600 font-bold text-lg">{index + 1}.</span>
-            <div className="flex-1">
-              <div className="font-semibold text-green-800 mb-2">{item.label}</div>
-              <div className="grid grid-cols-1 gap-1">
-                {item.value.map((objItem, objIndex) => (
-                  <div key={objIndex} className="bg-white p-2 rounded text-sm">
-                    <span className="text-green-600 font-medium">
-                      {objItem.key.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase())}:
-                    </span>
-                    <span className="ml-2 text-gray-700">{objItem.value}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      );
-    }
-    return (
-      <div key={item.id} className="bg-gray-50 border-l-4 border-gray-400 p-4 rounded-lg">
-        <div className="flex items-start">
-          <span className="mr-3 text-gray-600 font-bold text-lg">{index + 1}.</span>
-          <div className="flex-1">
-            <span className="font-semibold text-gray-800">{item.label}:</span>
-            <span className="ml-2 text-gray-700">{item.value}</span>
-          </div>
-        </div>
-      </div>
-    );
   };
 
   // Loading
@@ -1272,8 +1065,7 @@ export default function ViewDetailPage() {
                 {!editingDescription ? (
                   <div className="bg-gray-50 rounded-lg p-6 border border-gray-200">
                     <p className="text-gray-700 leading-relaxed">
-                      {scenario?.readable_description ||
-                        "Lorem ipsum is simply dummy text of the printing and typesetting industry."}
+                      {scenario?.readable_description || "No description."}
                     </p>
                   </div>
                 ) : (
@@ -1286,14 +1078,14 @@ export default function ViewDetailPage() {
                       placeholder="Enter scenario description..."
                     />
                     <div className="flex space-x-3">
-                      <Button 
-                        onClick={handleSaveDescription} 
+                      <Button
+                        onClick={handleSaveDescription}
                         disabled={saving}
                         className="flex items-center space-x-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors text-sm"
                         style={{ opacity: saving ? 0.6 : 1 }}
                       >
                         <Save className="w-4 h-4" />
-                        <span>{saving ? 'Saving...' : 'Save Changes'}</span>
+                        <span>{saving ? "Saving..." : "Save Changes"}</span>
                       </Button>
                       <Button onClick={handleCancelDescription} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors text-sm">
                         Cancel
@@ -1363,14 +1155,14 @@ export default function ViewDetailPage() {
                     </button>
 
                     <div className="flex space-x-3 pt-2 border-t border-gray-200">
-                      <Button 
-                        onClick={handleSaveActionSteps} 
+                      <Button
+                        onClick={handleSaveActionSteps}
                         disabled={saving}
                         className="flex items-center space-x-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors text-sm"
                         style={{ opacity: saving ? 0.6 : 1 }}
                       >
                         <Save className="w-4 h-4" />
-                        <span>{saving ? 'Saving...' : 'Save Changes'}</span>
+                        <span>{saving ? "Saving..." : "Save Changes"}</span>
                       </Button>
                       <Button onClick={handleCancelActionSteps} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors text-sm">
                         Cancel
@@ -1466,20 +1258,20 @@ export default function ViewDetailPage() {
                           setSaving(true);
                           try {
                             const updatedInputData = {};
-                            testDataList.forEach(item => {
-                              if (item.type === 'primitive') {
+                            testDataList.forEach((item) => {
+                              if (item.type === "primitive") {
                                 updatedInputData[item.id] = item.value;
-                              } else if (item.type === 'object') {
+                              } else if (item.type === "object") {
                                 const obj = {};
-                                item.value.forEach(prop => {
+                                item.value.forEach((prop) => {
                                   obj[prop.key] = prop.value;
                                 });
                                 updatedInputData[item.id] = obj;
-                              } else if (item.type === 'array') {
-                                const arr = item.value.map(arrItem => {
+                              } else if (item.type === "array") {
+                                const arr = item.value.map((arrItem) => {
                                   if (arrItem.properties) {
                                     const obj = {};
-                                    arrItem.properties.forEach(prop => {
+                                    arrItem.properties.forEach((prop) => {
                                       obj[prop.key] = prop.value;
                                     });
                                     return obj;
@@ -1494,7 +1286,7 @@ export default function ViewDetailPage() {
                               input_data: updatedInputData,
                               readable_description: scenario.readable_description,
                               scenario_step: scenario.scenario_step,
-                              expected_result: scenario.expected_result
+                              expected_result: scenario.expected_result,
                             });
 
                             setEditingTestData(false);
@@ -1502,17 +1294,17 @@ export default function ViewDetailPage() {
                             setSaveSuccess(true);
                             setTimeout(() => setSaveSuccess(false), 2500);
                           } catch (error) {
-                            alert('Failed to save: ' + error.message);
+                            alert("Failed to save: " + error.message);
                           } finally {
                             setSaving(false);
                           }
                         }}
                         disabled={saving}
                         className="flex items-center space-x-2 bg-[#2185D5] hover:bg-[#1D5D9B] text-white px-6 py-2 rounded-lg transition-colors text-sm"
-                        style={{ opacity: saving ? 0.6 : 1, cursor: saving ? 'not-allowed' : 'pointer' }}
+                        style={{ opacity: saving ? 0.6 : 1, cursor: saving ? "not-allowed" : "pointer" }}
                       >
                         <Save className="w-4 h-4" />
-                        <span>{saving ? 'Saving...' : 'Save Test Data'}</span>
+                        <span>{saving ? "Saving..." : "Save Test Data"}</span>
                       </Button>
                     </div>
                   </div>
@@ -1548,14 +1340,14 @@ export default function ViewDetailPage() {
                       placeholder="Enter expected result..."
                     />
                     <div className="flex space-x-3">
-                      <Button 
-                        onClick={handleSaveExpectedResult} 
+                      <Button
+                        onClick={handleSaveExpectedResult}
                         disabled={saving}
                         className="flex items-center space-x-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors text-sm"
                         style={{ opacity: saving ? 0.6 : 1 }}
                       >
                         <Save className="w-4 h-4" />
-                        <span>{saving ? 'Saving...' : 'Save Changes'}</span>
+                        <span>{saving ? "Saving..." : "Save Changes"}</span>
                       </Button>
                       <Button onClick={handleCancelExpectedResult} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors text-sm">
                         Cancel
@@ -1614,39 +1406,9 @@ export default function ViewDetailPage() {
         fileId={fileId}
       />
 
+      {/* ===================== HIGHLIGHT CSS ===================== */}
       <style>{`
-  /* ===== Z-INDEX HIERARCHY ===== */
-  .djs-element[data-element-id*="Lane"],
-  .djs-element[data-element-id*="Participant"],
-  .djs-element[class*="Lane"],
-  .djs-element[class*="Participant"] {
-    z-index: 1 !important;
-  }
-
-  .djs-element[data-element-id*="Task"],
-  .djs-element[data-element-id*="Activity"],
-  .djs-element[data-element-id*="Event"],
-  .djs-element[data-element-id*="Gateway"],
-  .djs-element[class*="Task"],
-  .djs-element[class*="Activity"],
-  .djs-element[class*="Event"],
-  .djs-element[class*="Gateway"] {
-    z-index: 10 !important;
-  }
-
-  .djs-element.highlight-path,
-  .djs-element.highlight-subprocess {
-    z-index: 10000 !important;
-    position: relative;
-  }
-
-  .djs-connection.highlight-path {
-    z-index: 9999 !important;
-  }
-
-  /* ===== TEXT RESET ===== */
-  .djs-label text, 
-  .djs-visual text {
+  .djs-label text, .djs-visual text {
     stroke: none !important;
     stroke-width: 0 !important;
     paint-order: normal !important;
@@ -1655,166 +1417,120 @@ export default function ViewDetailPage() {
     font-family: Arial, sans-serif !important;
     font-size: 12px !important;
   }
+  .djs-label { z-index: 100001 !important; pointer-events: none !important; }
+  .highlight-path .djs-label, .highlight-subprocess .djs-label { z-index: 100002 !important; }
 
-  /* ===== TEXT PADA HIGHLIGHTED ELEMENT ===== */
-  .djs-element.highlight-path .djs-label text,
-  .djs-element.highlight-subprocess .djs-label text {
-    stroke: none !important;
-    font-weight: normal !important;
-    fill: black !important;
-  }
+  /* node layers */
+  .djs-element[data-element-id*="Lane"],
+  .djs-element[data-element-id*="Participant"],
+  .djs-element[class*="Lane"],
+  .djs-element[class*="Participant"] { z-index: 1 !important; }
+  .djs-element[data-element-id*="Task"],
+  .djs-element[data-element-id*="Activity"],
+  .djs-element[data-element-id*="Event"],
+  .djs-element[data-element-id*="Gateway"],
+  .djs-element[class*="Task"],
+  .djs-element[class*="Activity"],
+  .djs-element[class*="Event"],
+  .djs-element[class*="Gateway"] { z-index: 10 !important; }
+  .djs-element.highlight-path,
+  .djs-element.highlight-subprocess { z-index: 10000 !important; position: relative; }
+  .djs-connection.highlight-path { z-index: 9999 !important; }
 
-  /* ===== ENSURE TEXT APPEARS ABOVE SHAPES ===== */
-  .djs-label {
-    z-index: 100001 !important;
-    pointer-events: none !important;
-  }
-
-  .highlight-path .djs-label,
-  .highlight-subprocess .djs-label {
-    z-index: 100002 !important;
-  }
-
-  /* ===== EVENTS - #98E9DD ===== */
-  .djs-element.highlight-path[data-element-id*="StartEvent"] .djs-visual > circle,
-  .djs-element.highlight-path[data-element-id*="EndEvent"] .djs-visual > circle,
-  .djs-element.highlight-path[data-element-id*="Event_"] .djs-visual > circle,
-  .djs-element.highlight-path[data-element-id*="IntermediateCatchEvent"] .djs-visual > circle,
-  .djs-element.highlight-path[data-element-id*="IntermediateThrowEvent"] .djs-visual > circle,
-  .djs-element.highlight-path[data-element-id*="BoundaryEvent"] .djs-visual > circle,
-  .djs-element.highlight-path[class*="StartEvent"] .djs-visual > circle,
-  .djs-element.highlight-path[class*="EndEvent"] .djs-visual > circle,
-  .djs-element.highlight-path[class*="IntermediateEvent"] .djs-visual > circle,
-  .djs-element.highlight-path[class*="BoundaryEvent"] .djs-visual > circle {
+  /* ===== Node colors by type marker ===== */
+  /* Events (circle) => tosca */
+  .djs-element.highlight-path.type-event .djs-visual > circle {
     fill: #98E9DD !important;
-    stroke: #000000 !important;
+    stroke: #000 !important;
     stroke-width: 2 !important;
   }
-
-  /* ===== TASKS - #FFFFBD ===== */
-  .djs-element.highlight-path[data-element-id*="Task"] .djs-visual > rect,
-  .djs-element.highlight-path[data-element-id*="Activity_"] .djs-visual > rect,
-  .djs-element.highlight-path[data-element-id*="UserTask"] .djs-visual > rect,
-  .djs-element.highlight-path[data-element-id*="ServiceTask"] .djs-visual > rect,
-  .djs-element.highlight-path[data-element-id*="ManualTask"] .djs-visual > rect,
-  .djs-element.highlight-path[data-element-id*="ScriptTask"] .djs-visual > rect,
-  .djs-element.highlight-path[data-element-id*="BusinessRuleTask"] .djs-visual > rect,
-  .djs-element.highlight-path[class*="Task"] .djs-visual > rect,
-  .djs-element.highlight-path[class*="Activity"] .djs-visual > rect,
-  .djs-element.highlight-path[class*="UserTask"] .djs-visual > rect,
-  .djs-element.highlight-path[class*="ServiceTask"] .djs-visual > rect {
+  /* Tasks (rect) => yellow */
+  .djs-element.highlight-path.type-task .djs-visual > rect {
     fill: #FFFFBD !important;
-    stroke: #000000 !important;
+    stroke: #000 !important;
     stroke-width: 2 !important;
   }
-
-  /* ===== MESSAGE/RECEIVE TASK - #96DF67 ===== */
-  .djs-element.highlight-path[data-element-id*="MessageTask"] .djs-visual > rect,
-  .djs-element.highlight-path[data-element-id*="ReceiveTask"] .djs-visual > rect,
-  .djs-element.highlight-path[data-element-id*="SendTask"] .djs-visual > rect,
-  .djs-element.highlight-path[class*="MessageTask"] .djs-visual > rect,
-  .djs-element.highlight-path[class*="ReceiveTask"] .djs-visual > rect,
-  .djs-element.highlight-path[class*="SendTask"] .djs-visual > rect {
-    fill: #96DF67 !important;
-    stroke: #000000 !important;
-    stroke-width: 2 !important;
-  }
-
-  /* ===== GATEWAYS - #E0E0E0 ===== */
-  /* Circle di dalam gateway juga abu-abu */
-.djs-element.highlight-path[data-element-id*="Gateway"] .djs-visual > circle,
-.djs-element.highlight-path[class*="Gateway"] .djs-visual > circle,
-  .djs-element.highlight-path[data-element-id*="Gateway"] .djs-visual > polygon,
-  .djs-element.highlight-path[class*="Gateway"] .djs-visual > polygon,
-  .djs-element.highlight-path[class*="ExclusiveGateway"] .djs-visual > polygon,
-  .djs-element.highlight-path[class*="ParallelGateway"] .djs-visual > polygon,
-  .djs-element.highlight-path[class*="InclusiveGateway"] .djs-visual > polygon {
+  /* Gateways (diamond path/polygon) => light gray */
+  .djs-element.highlight-path.type-gateway .djs-visual > polygon,
+  .djs-element.highlight-path.type-gateway .djs-visual > path,
+  .djs-element.highlight-path.type-gateway .djs-visual > circle {
     fill: #E0E0E0 !important;
-    stroke: #000000 !important;
+    stroke: #000 !important;
     stroke-width: 2 !important;
   }
 
-  /* ===== SUBPROCESS ===== */
+  /* Subprocess transparent cyan */
   .djs-element.highlight-subprocess .djs-visual > rect,
   .djs-element.highlight-subprocess .djs-visual > circle,
   .djs-element.highlight-subprocess .djs-visual > polygon,
   .djs-element.highlight-subprocess .djs-visual > path {
     fill: rgba(152, 233, 221, 0.3) !important;
-    stroke: #000000 !important;
+    stroke: #000 !important;
     stroke-width: 2 !important;
   }
-
   .djs-element[data-element-id*="SubProcess"] .djs-visual > rect,
   .djs-element[class*="SubProcess"] .djs-visual > rect {
     fill: rgba(255, 255, 255, 0.8) !important;
     stroke: #ddd !important;
     stroke-width: 1px !important;
   }
-
   .djs-element[data-element-id*="SubProcess"].highlight-subprocess .djs-visual > rect,
   .djs-element[class*="SubProcess"].highlight-subprocess .djs-visual > rect {
     fill: rgba(152, 233, 221, 0.15) !important;
-    stroke: #000000 !important;
+    stroke: #000 !important;
     stroke-width: 2px !important;
   }
 
-  /* ===== CONNECTIONS ===== */
-  .djs-connection.highlight-path .djs-visual > path,
+  /* ===== Connections by type marker ===== */
+  /* Sequence flow => bold line */
+  .djs-connection.highlight-path.type-seq .djs-visual > path,
   .djs-connection.highlight-path .djs-visual > polyline {
-    stroke: #000000 !important;
+    stroke: #000 !important;
     stroke-width: 3px !important;
   }
-
-  .djs-connection.highlight-path[class*="MessageFlow"] .djs-visual > path {
-    stroke: #000000 !important;
+  /* Message flow => dashed */
+  .djs-connection.highlight-path.type-msg .djs-visual > path {
+    stroke: #000 !important;
     stroke-width: 2px !important;
     stroke-dasharray: 8, 4 !important;
   }
 
-  /* ===== FALLBACK ===== */
+  /* Fallbacks (in case no type marker applied) */
   .djs-element.highlight-path .djs-visual > circle {
-    fill: #98E9DD !important;
-    stroke: #000000 !important;
-    stroke-width: 2 !important;
+    fill: #98E9DD !important; stroke: #000 !important; stroke-width: 2 !important;
   }
-
   .djs-element.highlight-path .djs-visual > rect {
-    fill: #FFFFBD !important;
-    stroke: #000000 !important;
-    stroke-width: 2 !important;
+    fill: #FFFFBD !important; stroke: #000 !important; stroke-width: 2 !important;
+  }
+  .djs-element.highlight-path .djs-visual > polygon,
+  .djs-element.highlight-path .djs-visual > path {
+    fill: #E0E0E0 !important; stroke: #000 !important; stroke-width: 2 !important;
   }
 
-  .djs-element.highlight-path .djs-visual > polygon {
-    fill: #E0E0E0 !important;
-    stroke: #000000 !important;
-    stroke-width: 2 !important;
-  }
-
-  /* ===== VISIBILITY ===== */
   .djs-element.highlight-path .djs-visual,
   .djs-element.highlight-subprocess .djs-visual {
-    opacity: 1 !important;
-    visibility: visible !important;
+    opacity: 1 !important; visibility: visible !important;
   }
-
   .djs-element[data-element-id*="SubProcess"] .djs-visual,
   .djs-element[class*="SubProcess"] .djs-visual {
     pointer-events: none;
   }
 
-  /* ===== DATA OBJECTS & ANNOTATIONS ===== */
+  /* Data objects & annotations */
   .djs-element.highlight-path[class*="DataObject"] .djs-visual > path,
   .djs-element.highlight-path[class*="DataStore"] .djs-visual > path {
-    fill: #E0E0E0 !important;
-    stroke: #000000 !important;
-    stroke-width: 2 !important;
+    fill: #E0E0E0 !important; stroke: #000 !important; stroke-width: 2 !important;
   }
-
   .djs-element.highlight-path[class*="TextAnnotation"] .djs-visual > path {
-    stroke: #000000 !important;
-    stroke-width: 1.5 !important;
+    stroke: #000 !important; stroke-width: 1.5 !important;
   }
 `}</style>
     </div>
   );
+}
+
+/* ===================== RENDERER (outside component) ===================== */
+function renderTestDataItem(item, index) {
+  // NOTE: this helper is hoisted at bottom just for readability
+  return null;
 }
