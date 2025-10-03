@@ -179,7 +179,7 @@ export default function LoginPage() {
               <div className="text-center space-y-6">
                 <h1 className="text-5xl font-bold text-gray-700 leading-tight">BPMN TESTING</h1>
                 <p className="text-gray-400 text-xl leading-relaxed">
-                  Automate test generate from your Business<br/>process models
+            Welcome back!<br/> Let’s continue turning your BPMN diagrams into test scenario
                 </p>
               </div>
               <div className="flex justify-center">

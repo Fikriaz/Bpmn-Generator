@@ -1,7 +1,7 @@
 // src/utils/auth.js
 
 //lokaL
-// export const API_BASE = "http://localhost:8080";
+ //export const API_BASE = "http://localhost:8080";
 
 //deploy
 export const API_BASE = "https://automation-test.up.railway.app";

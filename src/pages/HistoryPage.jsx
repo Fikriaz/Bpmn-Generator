@@ -1,3 +1,4 @@
+// HistoryBPMN.jsx
 "use client"
 
 import { useState, useEffect } from "react"
@@ -21,6 +22,7 @@ export default function HistoryBPMN() {
   const fetchBpmnHistory = async () => {
     try {
       setLoading(true)
+      // kalau kamu punya endpoint ringan: /api/bpmn/files/list — silakan ganti ke itu
       const response = await authFetch(`${API_BASE}/api/bpmn/files`, {}, { onUnauthorizedRedirectTo: "/login" })
       if (response.status === 401) return
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
@@ -35,49 +37,87 @@ export default function HistoryBPMN() {
   }
 
   const handleSelectItem = (id) => {
-    const newSelected = new Set(selectedItems)
-    newSelected.has(id) ? newSelected.delete(id) : newSelected.add(id)
-    setSelectedItems(newSelected)
+    setSelectedItems(prev => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
   }
 
   const handleSelectAll = () => {
-    if (selectedItems.size === bpmnFiles.length) setSelectedItems(new Set())
-    else setSelectedItems(new Set(bpmnFiles.map((file) => file.id)))
+    setSelectedItems(prev => {
+      if (prev.size === bpmnFiles.length) return new Set()
+      return new Set(bpmnFiles.map(f => f.id))
+    })
   }
 
-  const handleDelete = async () => {
-    if (selectedItems.size === 0) {
-      alert("Please select items to delete")
+  // ⬇️ PERBAIKAN PENTING: bulk delete via 1 request
+const handleDelete = async () => {
+  if (selectedItems.size === 0) {
+    alert("Please select items to delete")
+    return
+  }
+  if (!confirm(`Are you sure you want to delete ${selectedItems.size} item(s)?`)) return
+
+  setDeleting(true)
+  try {
+    const ids = Array.from(selectedItems)
+    console.log("🗑️ Attempting to delete IDs:", ids)
+    
+    const res = await authFetch(
+      `${API_BASE}/api/bpmn/files`,
+      {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      },
+      { onUnauthorizedRedirectTo: "/login" }
+    )
+
+    console.log("📡 Response status:", res.status)
+    console.log("📡 Response OK:", res.ok)
+
+    if (res.status === 401) return
+
+    // Baca response sekali
+    let data
+    const contentType = res.headers.get("content-type")
+    console.log("📄 Content-Type:", contentType)
+    
+    try {
+      if (contentType && contentType.includes("application/json")) {
+        data = await res.json()
+      } else {
+        const text = await res.text()
+        data = { message: text }
+      }
+      console.log("📦 Response data:", data)
+    } catch (parseError) {
+      console.error("❌ Parse error:", parseError)
+      data = { error: "Failed to parse response" }
+    }
+
+    if (!res.ok) {
+      const errorMsg = data.error || data.message || "Delete failed. Please try again."
+      console.error("❌ Delete failed:", errorMsg)
+      alert(errorMsg)
       return
     }
-    if (!confirm(`Are you sure you want to delete ${selectedItems.size} item(s)?`)) return
 
-    setDeleting(true)
-    try {
-      const ids = Array.from(selectedItems)
-      const results = await Promise.all(ids.map((fileId) =>
-        authFetch(`${API_BASE}/api/bpmn/files/${fileId}`, { method: "DELETE" }, { onUnauthorizedRedirectTo: "/login" })
-      ))
-
-      if (results.some(r => r.status === 401)) return
-
-      const anyFailed = results.some(r => !r.ok)
-      if (anyFailed) {
-        alert("Some items failed to delete. Please refresh and try again.")
-      } else {
-        alert("Items deleted successfully!")
-      }
-
-      setSelectedItems(new Set())
-      await fetchBpmnHistory()
-    } catch (err) {
-      console.error("Delete failed:", err)
-      alert("Delete failed. Please try again.")
-    } finally {
-      setDeleting(false)
-    }
+    // Success
+    console.log("✅ Delete success:", data)
+    setBpmnFiles(prev => prev.filter(f => !selectedItems.has(f.id)))
+    setSelectedItems(new Set())
+    alert(`Successfully deleted ${ids.length} file(s)`)
+    
+  } catch (err) {
+    console.error("💥 Delete error:", err)
+    alert(`Delete failed: ${err.message}`)
+  } finally {
+    setDeleting(false)
   }
-
+}
+  // ---- helpers tampilan ----
   const groupFilesByDate = (files) => {
     const today = new Date()
     const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1)
@@ -88,9 +128,8 @@ export default function HistoryBPMN() {
 
     files.forEach((file) => {
       const fileDate = new Date(file.uploadedAt)
-      const fileDateString = fileDate.toDateString()
-      if (fileDateString === today.toDateString()) todayFiles.push(file)
-      else if (fileDateString === yesterday.toDateString()) yesterdayFiles.push(file)
+      if (fileDate.toDateString() === today.toDateString()) todayFiles.push(file)
+      else if (fileDate.toDateString() === yesterday.toDateString()) yesterdayFiles.push(file)
       else if (fileDate >= lastWeek) lastWeekFiles.push(file)
       else olderFiles.push(file)
     })
@@ -226,9 +265,7 @@ export default function HistoryBPMN() {
                     {group.processes.map((file, processIndex) => (
                       <div
                         key={file.id}
-                        className={`flex items-center p-4 transition-all duration-200 ${
-                          selectedItems.has(file.id) ? "bg-blue-50 border-l-4 border-blue-500" : "hover:bg-gray-50"
-                        }`}
+                        className={`flex items-center p-4 transition-all duration-200 ${selectedItems.has(file.id) ? "bg-blue-50 border-l-4 border-blue-500" : "hover:bg-gray-50"}`}
                       >
                         <div className="flex items-center space-x-4 flex-1">
                           <Checkbox
@@ -237,9 +274,7 @@ export default function HistoryBPMN() {
                             onChange={() => handleSelectItem(file.id)}
                           />
                           <div className="flex-shrink-0">
-                            <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                              selectedItems.has(file.id) ? "bg-blue-100 text-blue-600" : "bg-gray-100 text-gray-500"
-                            }`}>
+                            <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${selectedItems.has(file.id) ? "bg-blue-100 text-blue-600" : "bg-gray-100 text-gray-500"}`}>
                               <FileText className="w-5 h-5" />
                             </div>
                           </div>
