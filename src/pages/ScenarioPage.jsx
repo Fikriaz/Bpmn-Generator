@@ -11,6 +11,12 @@ import {
   MapPin,
   AlertCircle
 } from "lucide-react";
+// main.jsx atau entry point FE kamu
+import "bpmn-js/dist/assets/diagram-js.css";
+import "bpmn-js/dist/assets/bpmn-font/css/bpmn.css";
+import "bpmn-js/dist/assets/bpmn-font/css/bpmn-codes.css";
+import "bpmn-js/dist/assets/bpmn-font/css/bpmn-embedded.css";
+
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import Button from "../components/ui/Button";
 import UserMenu from "../components/ui/UserMenu";
@@ -90,6 +96,7 @@ export default function ScenarioPage() {
           extractElementNames(viewer);
 
           const canvas = viewer.get("canvas");
+          canvas.resized();
           canvas.zoom("fit-viewport");
 
           const bus = viewer.get("eventBus");
@@ -837,6 +844,7 @@ const getStatusDisplay = (scenario) => {
 
 
 <style>{`
+.djs-container { width: 100% !important; height: 100% !important; }
   /* ===== Z-INDEX HIERARCHY (PALING PENTING) ===== */
   /* Lane dan Participant harus di bawah */
   .djs-element[data-element-id*="Lane"],
