@@ -963,7 +963,7 @@ const forceApplyHighlightColors = () => {
         fileId={fileId}
       />
 
-  <style>{`
+ <style>{`
 .djs-container { width: 100% !important; height: 100% !important; }
   /* ===== Z-INDEX HIERARCHY (PALING PENTING) ===== */
   /* Lane dan Participant harus di bawah */
