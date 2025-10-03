@@ -9,13 +9,21 @@ import { API_BASE, authFetch } from "../utils/auth";
 export default function UploadBpmnPage() {
   const location = useLocation();
   const navigate = useNavigate();
+
   const [data, setData] = useState(null);
+
+  // Loading overlay states
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [loadingText, setLoadingText] = useState("");
+
+  // BPMN viewer
   const containerRef = useRef(null);
   const viewerRef = useRef(null);
+
+  // timers
   const progressTimerRef = useRef(null);
+  const minDisplayTimerRef = useRef(null);
 
   useEffect(() => {
     const result = location.state?.result;
@@ -45,35 +53,51 @@ export default function UploadBpmnPage() {
     return () => clearTimeout(t);
   }, [location.state, navigate]);
 
-  const simulateProgress = () => {
-    const steps = [
-      { progress: 15, text: "Menganalisis diagram BPMN..." },
-      { progress: 35, text: "Memetakan alur proses..." },
-      { progress: 55, text: "Mengidentifikasi path eksekusi..." },
-      { progress: 75, text: "Mengenerate skenario testing..." },
-      { progress: 90, text: "Memvalidasi hasil..." },
-      { progress: 100, text: "Proses selesai!" },
-    ];
-
-    let stepIndex = 0;
+  // --- Progress simulation: stop at 90% until backend selesai ---
+  const startProgressUntil90 = () => {
+    // naik pelan sampai 90, lalu hold
     setProgress(0);
-    setLoadingText("Memulai proses...");
+    setLoadingText("Menganalisis diagram BPMN...");
+    const started = Date.now();
 
     progressTimerRef.current = setInterval(() => {
-      if (stepIndex < steps.length) {
-        const step = steps[stepIndex++];
-        setProgress(step.progress);
-        setLoadingText(step.text);
-      } else {
-        clearInterval(progressTimerRef.current);
-      }
-    }, 800);
+      setProgress((p) => {
+        if (p < 30) {
+          setLoadingText("Memetakan alur proses...");
+          return Math.min(p + 2, 30);
+        }
+        if (p < 55) {
+          setLoadingText("Mengidentifikasi path eksekusi...");
+          return Math.min(p + 2, 55);
+        }
+        if (p < 75) {
+          setLoadingText("Mengenerate skenario testing...");
+          return Math.min(p + 2, 75);
+        }
+        if (p < 90) {
+          setLoadingText("Memvalidasi hasil...");
+          return Math.min(p + 1, 90);
+        }
+        // tahan di 90 sambil nunggu backend/LLM
+        return 90;
+      });
+    }, 200);
+
+    // jaga overlay tampil minimal 2.5s biar nggak “kedip”
+    minDisplayTimerRef.current = setTimeout(() => {}, 2500);
+  };
+
+  const clearProgressTimers = () => {
+    if (progressTimerRef.current) clearInterval(progressTimerRef.current);
+    if (minDisplayTimerRef.current) clearTimeout(minDisplayTimerRef.current);
+    progressTimerRef.current = null;
+    minDisplayTimerRef.current = null;
   };
 
   const handleGenerate = async () => {
     if (!data?.id) return;
     setLoading(true);
-    simulateProgress();
+    startProgressUntil90();
 
     try {
       const response = await authFetch(
@@ -84,17 +108,27 @@ export default function UploadBpmnPage() {
 
       if (!response.ok) throw new Error("Gagal generate skenario");
 
-      // Pastikan progress minimal 5 detik biar UX mulus
+      // dorong dari 90 -> 100 dengan teks finalisasi & navigasi
+      setLoadingText("Memfinalisasi hasil...");
+      setProgress(95);
+
+      // kasih sedikit transisi agar terasa natural
       setTimeout(() => {
         setProgress(100);
         setLoadingText("Navigasi ke halaman skenario...");
+
+        // pastikan overlay tampil minimal sebentar
         setTimeout(() => {
-          navigate(`/scenario?fileId=${data.id}`, { replace: true, state: { fileId: data.id } });
+          clearProgressTimers();
+          navigate(`/scenario?fileId=${data.id}`, {
+            replace: true,
+            state: { fileId: data.id },
+          });
         }, 600);
-      }, 5000);
+      }, 600);
     } catch (error) {
       console.error("❌ Error generate skenario:", error);
-      clearInterval(progressTimerRef.current);
+      clearProgressTimers();
       setLoading(false);
       setProgress(0);
       alert("Gagal generate skenario. Coba lagi.");
@@ -103,8 +137,7 @@ export default function UploadBpmnPage() {
 
   useEffect(() => {
     return () => {
-      // cleanup interval & viewer saat unmount
-      if (progressTimerRef.current) clearInterval(progressTimerRef.current);
+      clearProgressTimers();
       if (viewerRef.current) viewerRef.current.destroy();
     };
   }, []);
@@ -128,7 +161,7 @@ export default function UploadBpmnPage() {
           </div>
           <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
             <div
-              className="bg-gradient-to-r from-blue-500 to-blue-600 h-full rounded-full transition-all duration-500 ease-out relative"
+              className="bg-gradient-to-r from-blue-500 to-blue-600 h-full rounded-full transition-all duration-300 ease-out relative"
               style={{ width: `${progress}%` }}
             >
               <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white to-transparent opacity-30 animate-pulse"></div>
@@ -136,7 +169,9 @@ export default function UploadBpmnPage() {
           </div>
         </div>
         <div className="text-center">
-          <p className="text-xs text-gray-500">Mohon tunggu, proses ini membutuhkan waktu beberapa saat...</p>
+          <p className="text-xs text-gray-500">
+            Mohon tunggu, proses generate dapat lebih lama tergantung kompleksitas diagram BPMN Anda.
+          </p>
         </div>
       </div>
     </div>
