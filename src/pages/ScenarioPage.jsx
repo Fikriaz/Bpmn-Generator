@@ -77,74 +77,31 @@ export default function ScenarioPage() {
 
         setData(json)
 
-        // Wait for container to be ready
-        if (!containerRef.current) {
-          console.error("Container ref not available")
-          throw new Error("Container not ready")
+        // NEW: Retry mechanism for container initialization
+        let retryCount = 0
+        const maxRetries = 5
+        const checkContainer = () => {
+          console.log("Checking container availability, attempt:", retryCount + 1)
+
+          if (containerRef.current) {
+            console.log("Container found, initializing BPMN viewer")
+            initializeBpmnViewer(json.bpmnXml, json)
+          } else if (retryCount < maxRetries) {
+            retryCount++
+            console.log("Container not ready, retrying in 300ms")
+            setTimeout(checkContainer, 300)
+          } else {
+            console.error("Container initialization failed after", maxRetries, "attempts")
+            setError("Container not ready - please try refreshing the page")
+            setLoading(false)
+          }
         }
 
-        console.log("Initializing BPMN viewer...")
-
-        // Create viewer with explicit configuration
-        const viewer = new BpmnViewer({
-          container: containerRef.current,
-          width: "100%",
-          height: "520px",
-        })
-
-        viewerRef.current = viewer
-
-        console.log("Importing BPMN XML...")
-
-        // Import XML with error handling
-        const importResult = await viewer.importXML(json.bpmnXml)
-
-        if (importResult.warnings && importResult.warnings.length > 0) {
-          console.warn("BPMN import warnings:", importResult.warnings)
-        }
-
-        console.log("BPMN XML imported successfully")
-
-        // Build element mapping
-        buildElementMapping(viewer, json)
-        extractElementNames(viewer)
-
-        // Get canvas and force resize
-        const canvas = viewer.get("canvas")
-
-        // Force canvas to render
-        canvas.resized()
-
-        // Fit viewport
-        setTimeout(() => {
-          canvas.zoom("fit-viewport")
-          console.log("Canvas zoomed to fit viewport")
-        }, 100)
-
-        // Event listeners
-        const bus = viewer.get("eventBus")
-        bus.on("import.render.complete", () => {
-          console.log("Render complete")
-          fixTextStyling()
-        })
-        bus.on("import.done", () => {
-          console.log("Import done")
-          fixTextStyling()
-        })
-
-        // Highlight first path
-        const list = getScenarios(json)
-        if (list.length > 0) {
-          setTimeout(() => {
-            const actualIds = convertToActualIds(list[0]?.rawPath || [])
-            console.log("Highlighting first path:", actualIds)
-            highlightPath(actualIds)
-          }, 200)
-        }
+        // Start checking for container
+        checkContainer()
       } catch (err) {
         console.error("Error in fetchData:", err)
         setError(err.message || "Failed to load BPMN diagram")
-      } finally {
         setLoading(false)
       }
     }
@@ -598,6 +555,75 @@ export default function ScenarioPage() {
     }
   }
 
+  const initializeBpmnViewer = async (bpmnXml, jsonData) => {
+    try {
+      console.log("Creating BPMN viewer instance")
+
+      // Create viewer with explicit configuration
+      const viewer = new BpmnViewer({
+        container: containerRef.current,
+        width: "100%",
+        height: "520px",
+      })
+
+      viewerRef.current = viewer
+
+      console.log("Importing BPMN XML...")
+
+      // Import XML with error handling
+      const importResult = await viewer.importXML(bpmnXml)
+
+      if (importResult.warnings && importResult.warnings.length > 0) {
+        console.warn("BPMN import warnings:", importResult.warnings)
+      }
+
+      console.log("BPMN XML imported successfully")
+
+      // Build element mapping
+      buildElementMapping(viewer, jsonData)
+      extractElementNames(viewer)
+
+      // Get canvas and force resize
+      const canvas = viewer.get("canvas")
+
+      // Force canvas to render
+      canvas.resized()
+
+      // Fit viewport
+      setTimeout(() => {
+        canvas.zoom("fit-viewport")
+        console.log("Canvas zoomed to fit viewport")
+      }, 300)
+
+      // Event listeners
+      const bus = viewer.get("eventBus")
+      bus.on("import.render.complete", () => {
+        console.log("Render complete")
+        fixTextStyling()
+      })
+      bus.on("import.done", () => {
+        console.log("Import done")
+        fixTextStyling()
+      })
+
+      // Highlight first path
+      const list = getScenarios(jsonData)
+      if (list.length > 0) {
+        setTimeout(() => {
+          const actualIds = convertToActualIds(list[0]?.rawPath || [])
+          console.log("Highlighting first path:", actualIds)
+          highlightPath(actualIds)
+        }, 500)
+      }
+
+      setLoading(false)
+    } catch (err) {
+      console.error("Error initializing BPMN viewer:", err)
+      setError("Failed to initialize BPMN viewer: " + (err.message || "Unknown error"))
+      setLoading(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -692,9 +718,15 @@ export default function ScenarioPage() {
           </div>
           <div className="p-6">
             <div
+              id="bpmn-container"
               ref={containerRef}
               className="w-full rounded-lg border border-gray-200 overflow-hidden bg-white"
-              style={{ height: "520px", minHeight: "520px" }}
+              style={{
+                height: "520px",
+                minHeight: "520px",
+                display: "block", // Ensure it's visible
+                position: "relative", // Helps with positioning internal elements
+              }}
             />
           </div>
         </div>
