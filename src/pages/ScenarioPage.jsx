@@ -32,19 +32,7 @@ import "bpmn-js/dist/assets/bpmn-font/css/bpmn.css";
 import "bpmn-js/dist/assets/bpmn-font/css/bpmn-codes.css";
 import "bpmn-js/dist/assets/bpmn-font/css/bpmn-embedded.css";
 
-// biar aman di prod/hosting, bpmn-js dipakai via dynamic import
-let BpmnViewerLocal = null;
-// setelah importXML
-await viewerRef.current.importXML(data.bpmnXml);
 
-// build mapping sekali per import
-const mapping = buildElementMapping(viewerRef.current);
-
-// contoh: pakai scenario terpilih
-if (selectedScenario?.rawPath?.length) {
-  const ids = convertToActualIds(selectedScenario.rawPath, mapping);
-  highlightPath(viewerRef.current, ids);
-}
 
 // zoom
 viewerRef.current.get("canvas").zoom("fit-viewport");
@@ -78,6 +66,7 @@ export default function ScenarioPage() {
 
   const [bpmnReady, setBpmnReady] = useState(false);
   useEffect(() => {
+    
     (async () => {
       try {
         const M = await import("bpmn-js/lib/NavigatedViewer");
@@ -157,65 +146,68 @@ export default function ScenarioPage() {
   }, [fileId, navigate]);
 
   /* ===== Init Viewer setelah SEMUA siap ===== */
-  useEffect(() => {
-    if (!bpmnReady || !containerSized || !data?.bpmnXml) return;
+useEffect(() => {
+  if (!bpmnReady || !containerSized || !data?.bpmnXml) return;
 
-    // bersihkan viewer lama (StrictMode bisa double mount)
+  try {
+    viewerRef.current?.destroy();
+  } catch {}
+
+  const init = async () => {
+    const viewer = new BpmnViewerLocal({
+      container: containerRef.current,
+      width: "100%",
+      height: "520px",
+    });
+    viewerRef.current = viewer;
+
+    // ✅ Import XML sekali saja
+    await viewer.importXML(data.bpmnXml);
+
+    // ✅ bangun mapping sekali di sini
+    const mapping = buildElementMapping(viewer);
+    elementMappingRef.current = mapping;
+
+    extractElementNames(viewer);
+
+    const canvas = viewer.get("canvas");
+    const bus = viewer.get("eventBus");
+
+    const fit = () => {
+      try {
+        canvas.resized();
+        canvas.zoom("fit-viewport");
+        requestAnimationFrame(() => {
+          canvas.resized();
+          canvas.zoom("fit-viewport");
+        });
+      } catch {}
+    };
+
+    fit();
+    bus.on("import.done", fit);
+    bus.on("import.render.complete", () => {
+      fixTextStyling();
+      fit();
+    });
+
+    // ✅ highlight path pertama bila ada
+    const list = getScenarios(data);
+    if (list.length > 0) {
+      const ids = convertToActualIds(list[0]?.rawPath || [], mapping);
+      highlightPath(viewer, ids);
+    }
+  };
+
+  init();
+
+  return () => {
     try {
       viewerRef.current?.destroy();
     } catch {}
+  };
+}, [bpmnReady, containerSized, data]);
 
-    const init = async () => {
-      const viewer = new BpmnViewerLocal({
-        container: containerRef.current,
-        width: "100%",
-        height: "520px"
-      });
-      viewerRef.current = viewer;
-
-      await viewer.importXML(data.bpmnXml);
-
-      buildElementMapping(viewer, data);
-      extractElementNames(viewer);
-
-      const canvas = viewer.get("canvas");
-      const bus = viewer.get("eventBus");
-
-      const fit = () => {
-        try {
-          canvas.resized();
-          canvas.zoom("fit-viewport");
-          // fit lagi next frame (mengatasi first paint 0-size)
-          requestAnimationFrame(() => {
-            canvas.resized();
-            canvas.zoom("fit-viewport");
-          });
-        } catch {}
-      };
-
-      fit();
-      bus.on("import.done", fit);
-      bus.on("import.render.complete", () => {
-        fixTextStyling();
-        fit();
-      });
-
-      // highlight path pertama bila ada
-      const list = getScenarios(data);
-      if (list.length > 0) {
-        const actualIds = convertToActualIds(list[0]?.rawPath || []);
-        highlightPath(actualIds);
-      }
-    };
-
-    init();
-
-    return () => {
-      try {
-        viewerRef.current?.destroy();
-      } catch {}
-    };
-  }, [bpmnReady, containerSized, data]);
 
   /* ===== React ke pergantian path ===== */
   useEffect(() => {
