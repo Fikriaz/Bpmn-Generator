@@ -183,8 +183,6 @@ export default function ScenarioPage() {
       bus.on("import.done", fit);
       bus.on("import.render.complete", () => {
         fixTextStyling();
-          forceApplyHighlightColors(); // ⭐ Tambahkan ini
-
         fit();
       });
 
@@ -368,70 +366,6 @@ export default function ScenarioPage() {
     const customStyles = document.querySelectorAll(".bpmn-highlight-style");
     customStyles.forEach((style) => style.remove());
   };
-const forceApplyHighlightColors = () => {
-  const viewer = viewerRef.current;
-  if (!viewer) return;
-  
-  const canvas = viewer.get("canvas");
-  const registry = viewer.get("elementRegistry");
-  
-  // Get all highlighted elements
-  const highlightedElements = registry.filter((el) => {
-    return canvas.hasMarker(el.id, "highlight-path") || 
-           canvas.hasMarker(el.id, "highlight-subprocess");
-  });
-  
-  highlightedElements.forEach((element) => {
-    const gfx = canvas.getGraphics(element);
-    if (!gfx) return;
-    
-    const type = element.type;
-    let fillColor, strokeColor;
-    
-    // Determine colors based on element type
-    if (type.includes("StartEvent") || type.includes("EndEvent") || 
-        type.includes("IntermediateEvent") || type.includes("BoundaryEvent")) {
-      fillColor = "#98E9DD"; // Cyan for events
-      strokeColor = "#000000";
-    } else if (type.includes("MessageTask") || type.includes("ReceiveTask") || 
-               type.includes("SendTask")) {
-      fillColor = "#96DF67"; // Green for message tasks
-      strokeColor = "#000000";
-    } else if (type.includes("Gateway")) {
-      fillColor = "#E0E0E0"; // Gray for gateways
-      strokeColor = "#000000";
-    } else if (type.includes("Task") || type.includes("Activity")) {
-      fillColor = "#FFFFBD"; // Yellow for tasks
-      strokeColor = "#000000";
-    } else if (type.includes("SubProcess")) {
-      fillColor = "rgba(152, 233, 221, 0.3)"; // Light cyan for subprocess
-      strokeColor = "#000000";
-    }
-    
-    if (fillColor) {
-      // Apply to all shapes (circle, rect, polygon, path)
-      const shapes = gfx.querySelectorAll("circle, rect, polygon, path");
-      shapes.forEach((shape) => {
-        shape.style.fill = fillColor;
-        shape.style.stroke = strokeColor;
-        shape.style.strokeWidth = "2px";
-      });
-    }
-  });
-  
-  // Also highlight connections
-  const connections = registry.filter((el) => el.waypoints && canvas.hasMarker(el.id, "highlight-path"));
-  connections.forEach((conn) => {
-    const gfx = canvas.getGraphics(conn);
-    if (!gfx) return;
-    
-    const paths = gfx.querySelectorAll("path, polyline");
-    paths.forEach((path) => {
-      path.style.stroke = "#000000";
-      path.style.strokeWidth = "3px";
-    });
-  });
-};
 
   const highlightPath = (actualIds) => {
     const viewer = viewerRef.current;
@@ -484,7 +418,6 @@ const forceApplyHighlightColors = () => {
     canvas.zoom("fit-viewport");
     setTimeout(() => {
       fixTextStyling();
-      forceApplyHighlightColors(); // Tambahkan ini
       canvas.resized();
       canvas.zoom("fit-viewport");
     }, 50);
@@ -963,7 +896,7 @@ const forceApplyHighlightColors = () => {
         fileId={fileId}
       />
 
- <style>{`
+   <style>{`
 .djs-container { width: 100% !important; height: 100% !important; }
   /* ===== Z-INDEX HIERARCHY (PALING PENTING) ===== */
   /* Lane dan Participant harus di bawah */
