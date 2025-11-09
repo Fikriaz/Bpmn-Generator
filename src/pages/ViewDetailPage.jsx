@@ -18,6 +18,14 @@ import UserMenu from "../components/ui/UserMenu";
 import DownloadPopup from "../components/DownloadPopup";
 import { API_BASE, authFetch } from "../utils/auth";
 
+// ✅ IMPORT UTILS untuk unified highlight logic
+import {
+  buildElementMapping,
+  convertToActualIds,
+  highlightPath,
+  clearAllHighlights
+} from "../utils/bpmnHighlight";
+
 // Import BPMN viewer
 let BpmnViewer = null;
 
@@ -27,7 +35,7 @@ export default function ViewDetailPage() {
   const navigate = useNavigate();
   const containerRef = useRef(null);
   const viewerRef = useRef(null);
-  const elementMappingRef = useRef({});
+  const elementMappingRef = useRef(null); // ✅ Changed from {} to null
 
   // Get parameters
   const scenarioId = searchParams.get("scenarioId");
@@ -237,82 +245,16 @@ export default function ViewDetailPage() {
     }
   };
 
-  // Mapping displayName -> elementId
-  const buildElementMapping = (viewer, data) => {
-    const registry = viewer.get("elementRegistry");
-    const elements = registry.getAll();
-    const mapping = {};
-
-    if (data.elementsJson && Array.isArray(data.elementsJson)) {
-      data.elementsJson.forEach((elem) => {
-        if (elem.lane && elem.name) {
-          const displayName = `[${elem.lane}] ${elem.name}`;
-          mapping[displayName] = elem.id;
-        } else if (elem.name) {
-          mapping[elem.name] = elem.id;
-          mapping[`[System] ${elem.name}`] = elem.id;
-        }
-      });
-    }
-
-    elements.forEach((el) => {
-      const bo = el.businessObject;
-      if (bo && bo.name) {
-        mapping[bo.name] = el.id;
-        if (el.parent && el.parent.type === "bpmn:SubProcess") {
-          mapping[`[System] ${bo.name}`] = el.id;
-        }
-        const lane = findElementLane(el, elements);
-        if (lane) mapping[`[${lane}] ${bo.name}`] = el.id;
-      }
-    });
-
-    elementMappingRef.current = mapping;
-  };
-
-  const findElementLane = (element, allElements) => {
-    const lanes = allElements.filter((el) => el.type === "bpmn:Lane");
-    for (const lane of lanes) {
-      if (lane.businessObject?.flowNodeRef && lane.businessObject.flowNodeRef.includes(element.id)) {
-        return lane.businessObject.name || lane.id;
-      }
-    }
-    return null;
-  };
-
-  const convertToActualIds = (displayNames) => {
-    if (!Array.isArray(displayNames)) return [];
-    const mapping = elementMappingRef.current;
-    return displayNames
-      .map((displayName) => {
-        let actualId = mapping[displayName];
-        if (!actualId && displayName.includes("[System]")) {
-          const cleanName = displayName.replace(/^\[.*?\]\s*/, "");
-          actualId = mapping[cleanName];
-        }
-        if (!actualId && displayName.includes("]")) {
-          const withoutLane = displayName.replace(/^\[.*?\]\s*/, "");
-          actualId = mapping[withoutLane];
-        }
-        if (!actualId) {
-          console.warn(`No mapping found for display name: ${displayName}`);
-          return displayName;
-        }
-        return actualId;
-      })
-      .filter(Boolean);
-  };
-
-  const findFlowIdsBetween = (fromId, toId) => {
-    if (!viewerRef.current) return [];
+  const extractElementNames = (viewer) => {
     try {
-      const reg = viewerRef.current.get("elementRegistry");
-      const from = reg.get(fromId);
-      if (!from || !from.outgoing) return [];
-      return from.outgoing.filter((f) => f?.target?.id === toId).map((f) => f.id);
-    } catch {
-      return [];
-    }
+      const registry = viewer.get("elementRegistry");
+      const elements = registry.getAll();
+      const nameMap = {};
+      elements.forEach((el) => {
+        nameMap[el.id] = el.businessObject?.name || el.id;
+      });
+      setElementNames(nameMap);
+    } catch {}
   };
 
   // Initialize BPMN viewer
@@ -414,12 +356,16 @@ export default function ViewDetailPage() {
 
       await viewer.importXML(bpmnXml);
 
-      buildElementMapping(viewer, data);
+      // ✅ GUNAKAN UTILS - Build mapping sekali
+      const mapping = buildElementMapping(viewer);
+      elementMappingRef.current = mapping;
+
       extractElementNames(viewer);
 
+      // ✅ GUNAKAN UTILS - Convert dan highlight
       if (selectedScenario?.rawPath) {
-        const actualIds = convertToActualIds(selectedScenario.rawPath);
-        highlightPath(actualIds);
+        const actualIds = convertToActualIds(selectedScenario.rawPath, mapping);
+        highlightPath(viewer, actualIds);
       }
 
       viewer.get("eventBus").on("rendered", () => {
@@ -488,63 +434,6 @@ export default function ViewDetailPage() {
     return testDataArray;
   };
 
-  const extractElementNames = (viewer) => {
-    try {
-      const registry = viewer.get("elementRegistry");
-      const elements = registry.getAll();
-      const nameMap = {};
-      elements.forEach((el) => {
-        nameMap[el.id] = el.businessObject?.name || el.id;
-      });
-      setElementNames(nameMap);
-    } catch {}
-  };
-
-  const highlightPath = (actualIds) => {
-    if (!viewerRef.current || !Array.isArray(actualIds) || actualIds.length === 0) return;
-
-    try {
-      const canvas = viewerRef.current.get("canvas");
-      const registry = viewerRef.current.get("elementRegistry");
-
-      registry.getAll().forEach((el) => {
-        canvas.removeMarker(el.id, "highlight-path");
-        canvas.removeMarker(el.id, "highlight-subprocess");
-      });
-
-      const valid = actualIds
-        .map((id) => {
-          const element = registry.get(id);
-          if (!element) return null;
-          return {
-            id,
-            element,
-            isSubprocessElement: element.parent && element.parent.type === "bpmn:SubProcess",
-          };
-        })
-        .filter(Boolean);
-
-      if (!valid.length) {
-        canvas.zoom("fit-viewport");
-        return;
-      }
-
-      valid.forEach(({ id, isSubprocessElement }) => {
-        const marker = isSubprocessElement ? "highlight-subprocess" : "highlight-path";
-        canvas.addMarker(id, marker);
-      });
-
-      for (let i = 0; i < valid.length - 1; i++) {
-        const flowIds = findFlowIdsBetween(valid[i].id, valid[i + 1].id);
-        flowIds.forEach((fid) => canvas.addMarker(fid, "highlight-path"));
-      }
-
-      canvas.zoom("fit-viewport");
-    } catch (error) {
-      console.warn("Error highlighting path:", error);
-    }
-  };
-
   const getActionSteps = (scenarioStep) => {
     if (!scenarioStep) return [];
     const steps = scenarioStep
@@ -582,16 +471,11 @@ export default function ViewDetailPage() {
     }
   };
   const handleResetHighlight = () => {
-    if (!viewerRef.current) return;
-    const canvas = viewerRef.current.get("canvas");
-    const elementRegistry = viewerRef.current.get("elementRegistry");
-    elementRegistry.getAll().forEach((el) => {
-      canvas.removeMarker(el.id, "highlight-path");
-      canvas.removeMarker(el.id, "highlight-subprocess");
-    });
+    // ✅ GUNAKAN UTILS
+    clearAllHighlights(viewerRef.current);
   };
 
-  // ✅ FIXED: Edit handlers with backend save
+  // ✅ Edit handlers with backend save
   const handleEditDescription = () => {
     setEditingDescription(true);
     setTempDescription(scenario?.readable_description || "");
@@ -1614,7 +1498,7 @@ export default function ViewDetailPage() {
         fileId={fileId}
       />
 
-     <style>{`
+      <style>{`
 /* ============================================================================
    BPMN Highlight CSS - Complete Version
    Untuk ScenarioPage.jsx dan ViewDetailPage.jsx

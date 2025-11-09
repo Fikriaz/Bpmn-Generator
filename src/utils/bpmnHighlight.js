@@ -143,7 +143,104 @@ function findConnectingEdge(reg, aId, bId) {
   return null;
 }
 
-// --- 6) Highlighter ----------------------------------------------------------
+// --- 6) Detect Parallel Gateway & Collect Parallel Branches -----------------
+function detectParallelBranches(reg, elementIds) {
+  const parallelPaths = new Set();
+  const pathSet = new Set(elementIds);
+  
+  elementIds.forEach((id, index) => {
+    const el = reg.get(id);
+    if (!el) return;
+    
+    const type = String(el.type || el.businessObject?.$type || "").toLowerCase();
+    
+    // Cek apakah ini Parallel Gateway (fork)
+    if (type.includes("parallelgateway")) {
+      const outgoing = el.outgoing || [];
+      
+      // Cek apakah ini fork gateway (outgoing > 1)
+      if (outgoing.length > 1) {
+        console.log(LOG_PREFIX, `Found parallel fork gateway: ${id}`);
+        
+        // Cari join gateway dari path utama
+        const joinGateway = findJoinGateway(reg, elementIds, index);
+        
+        // Untuk setiap branch, cek apakah ada node dari branch itu di path utama
+        outgoing.forEach(flow => {
+          if (flow.target) {
+            const branchPath = traverseBranch(reg, flow.target.id, new Set(), joinGateway);
+            
+            // Cek apakah ada node dari branch ini yang ada di path utama
+            const hasNodeInPath = branchPath.some(nodeId => pathSet.has(nodeId));
+            
+            // Hanya highlight branch yang memang dilalui path aktif
+            if (hasNodeInPath) {
+              branchPath.forEach(nodeId => parallelPaths.add(nodeId));
+              console.log(LOG_PREFIX, `Added parallel branch: ${branchPath.length} nodes`);
+            }
+          }
+        });
+      }
+    }
+  });
+  
+  return Array.from(parallelPaths);
+}
+
+// Cari join gateway setelah fork
+function findJoinGateway(reg, elementIds, forkIndex) {
+  for (let i = forkIndex + 1; i < elementIds.length; i++) {
+    const el = reg.get(elementIds[i]);
+    if (!el) continue;
+    
+    const type = String(el.type || el.businessObject?.$type || "").toLowerCase();
+    if (type.includes("parallelgateway") && (el.incoming || []).length > 1) {
+      return elementIds[i];
+    }
+  }
+  return null;
+}
+
+// Traverse dari node sampai ketemu join gateway atau end
+function traverseBranch(reg, startId, visited, joinGatewayId, maxDepth = 20) {
+  const path = [];
+  const queue = [[startId, 0]];
+  
+  while (queue.length > 0) {
+    const [currentId, depth] = queue.shift();
+    
+    if (visited.has(currentId) || depth > maxDepth) continue;
+    visited.add(currentId);
+    
+    const el = reg.get(currentId);
+    if (!el) continue;
+    
+    path.push(currentId);
+    
+    // Stop jika sudah sampai join gateway yang ditentukan
+    if (joinGatewayId && currentId === joinGatewayId) {
+      break;
+    }
+    
+    const type = String(el.type || el.businessObject?.$type || "").toLowerCase();
+    
+    // Stop jika ketemu parallel gateway join (incoming > 1) dan bukan gateway awal
+    if (type.includes("parallelgateway") && (el.incoming || []).length > 1) {
+      break;
+    }
+    
+    // Lanjut ke node berikutnya
+    (el.outgoing || []).forEach(flow => {
+      if (flow.target) {
+        queue.push([flow.target.id, depth + 1]);
+      }
+    });
+  }
+  
+  return path;
+}
+
+// --- 7) Highlighter - Simple version tanpa auto parallel detection ----------
 export function highlightPath(viewer, elementIds = []) {
   if (!viewer || !elementIds?.length) return;
 
@@ -153,7 +250,9 @@ export function highlightPath(viewer, elementIds = []) {
   const canvas = viewer.get("canvas");
   const reg = viewer.get("elementRegistry");
 
-  // highlight node
+  console.log(LOG_PREFIX, `Highlighting path: ${elementIds.length} nodes`);
+
+  // Highlight node sesuai elementIds yang diberikan (exact path dari backend)
   elementIds.forEach(id => {
     const el = reg.get(id);
     if (!el) return;
@@ -161,7 +260,7 @@ export function highlightPath(viewer, elementIds = []) {
     canvas.addMarker(id, isSub ? "highlight-subprocess" : "highlight-path");
   });
 
-  // cari edge antar pasangan berurutan
+  // Highlight edges antar node berurutan
   let edgeCount = 0;
   for (let i = 0; i < elementIds.length - 1; i++) {
     const edgeId = findConnectingEdge(reg, elementIds[i], elementIds[i + 1]);
@@ -171,6 +270,5 @@ export function highlightPath(viewer, elementIds = []) {
     }
   }
 
-  console.log(LOG_PREFIX, `Highlighting ${elementIds.length} elements`);
   console.log(LOG_PREFIX, `Highlighted ${edgeCount} edges`);
 }

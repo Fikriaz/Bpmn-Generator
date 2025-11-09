@@ -32,7 +32,6 @@ export default function LoginPage() {
   const validateForm = () => {
     if (!formData.username.trim()) { setError("Username is required"); return false }
     if (!formData.password) { setError("Password is required"); return false }
-    if (formData.username.length < 3) { setError("Username must be at least 3 characters"); return false }
     return true
   }
 
