@@ -1,7 +1,7 @@
 import axios from "axios"
 
 //hosting
-const API_BASE_URL = "https://automation-test.up.railway.app/api"
+const API_BASE_URL = "https://automation-test.up.railway.app"
 
 //lokal
 // const API_BASE_URL = "http://localhost:8081/api"
