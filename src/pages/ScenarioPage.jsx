@@ -67,13 +67,13 @@ export default function ScenarioPage() {
 
   const fileId = location.state?.fileId || new URLSearchParams(location.search).get("fileId");
 
-  // ✅ Callback ref untuk container
+  //  Callback ref untuk container
   const setContainer = (el) => {
     containerRef.current = el;
     setContainerReady(!!el);
   };
 
-  // ✅ Check container size
+  //  Check container size
   useLayoutEffect(() => {
     if (!containerReady) return;
     const el = containerRef.current;
@@ -88,7 +88,7 @@ export default function ScenarioPage() {
     return () => ro.disconnect();
   }, [containerReady]);
 
-  // ✅ Lazy-load BPMN viewer
+  // BPMN viewer
   useEffect(() => {
     (async () => {
       try {
@@ -147,7 +147,7 @@ export default function ScenarioPage() {
 
   const scenarios = useMemo(() => getScenarios(data), [data]);
 
-  // ✅ Init viewer setelah semua siap
+  // bpmn vuewer
   useEffect(() => {
     if (!bpmnReady || !containerSized || !data?.bpmnXml || !BpmnViewer) return;
 
@@ -200,7 +200,7 @@ export default function ScenarioPage() {
     };
   }, [bpmnReady, containerSized, data]);
 
-  // ✅ Re-highlight saat path berubah
+  // highlight saat path berubah
   useEffect(() => {
     if (!scenarios.length || !viewerRef.current) return;
     const mapping = elementMappingRef.current;
@@ -208,7 +208,7 @@ export default function ScenarioPage() {
     highlightPath(viewerRef.current, ids);
   }, [currentPathIndex, scenarios, scenarios.length]);
 
-  // ✅ UI Handlers
+  //  UI Handlers
   const handlePrev = () => {
     if (!scenarios.length) return;
     setCurrentPathIndex((i) => (i === 0 ? scenarios.length - 1 : i - 1));
@@ -347,6 +347,7 @@ export default function ScenarioPage() {
           });
         }
 
+        //download
         const downloadData = {
           format,
           pathId: scenario?.path_id || "-",
@@ -393,7 +394,6 @@ export default function ScenarioPage() {
     }
   };
 
-  // ✅ Loading
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -405,7 +405,6 @@ export default function ScenarioPage() {
     );
   }
 
-  // ✅ Error
   if (error) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">

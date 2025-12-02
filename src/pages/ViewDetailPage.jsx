@@ -18,7 +18,6 @@ import UserMenu from "../components/ui/UserMenu";
 import DownloadPopup from "../components/DownloadPopup";
 import { API_BASE, authFetch } from "../utils/auth";
 
-// ✅ IMPORT UTILS untuk unified highlight logic
 import {
   buildElementMapping,
   convertToActualIds,
@@ -343,6 +342,7 @@ export default function ViewDetailPage() {
     }
   };
 
+  // tampilkan bpmn
   const initializeBpmnDiagram = async (bpmnXml, selectedScenario) => {
     try {
       if (viewerRef.current) viewerRef.current.destroy();
@@ -356,13 +356,11 @@ export default function ViewDetailPage() {
 
       await viewer.importXML(bpmnXml);
 
-      // ✅ GUNAKAN UTILS - Build mapping sekali
       const mapping = buildElementMapping(viewer);
       elementMappingRef.current = mapping;
 
       extractElementNames(viewer);
 
-      // ✅ GUNAKAN UTILS - Convert dan highlight
       if (selectedScenario?.rawPath) {
         const actualIds = convertToActualIds(selectedScenario.rawPath, mapping);
         highlightPath(viewer, actualIds);
@@ -388,6 +386,7 @@ export default function ViewDetailPage() {
     }
   };
 
+  //bpmn diagram
   useEffect(() => {
     if (bpmnViewerReady && data?.bpmnXml && containerRef.current && !viewerRef.current) {
       initializeBpmnDiagram(data.bpmnXml, scenario);
@@ -471,11 +470,9 @@ export default function ViewDetailPage() {
     }
   };
   const handleResetHighlight = () => {
-    // ✅ GUNAKAN UTILS
     clearAllHighlights(viewerRef.current);
   };
 
-  // ✅ Edit handlers with backend save
   const handleEditDescription = () => {
     setEditingDescription(true);
     setTempDescription(scenario?.readable_description || "");
@@ -666,6 +663,7 @@ export default function ViewDetailPage() {
     setSaveSuccess(false);
   };
 
+
   const handleSaveChanges = async () => {
     if (!editingTestData) {
       navigate("/scenario", { state: { fileId }, replace: true });
@@ -727,6 +725,7 @@ export default function ViewDetailPage() {
     setTestDataList(JSON.parse(JSON.stringify(originalTestData)));
   };
 
+  //opsi download
   const handleDownload = async (downloadOptions) => {
     const { format, includeTesterName, testerName } = downloadOptions;
     if (!fileId) throw new Error("File ID not found");

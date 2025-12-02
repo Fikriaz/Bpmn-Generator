@@ -161,14 +161,14 @@ export default function LoginPage() {
                       </div> : "Sign In"}
                     </Button>
 
-                    <div className="text-center">
+                    {/* <div className="text-center">
                       <p className="text-gray-600 text-sm">
                         Don't have an account?{" "}
                         <Link to="/register" className="text-blue-600 hover:text-blue-800 font-medium cursor-pointer transition-colors">
                           Sign up here
                         </Link>
                       </p>
-                    </div>
+                    </div> */}
                   </form>
                 </div>
               </div>

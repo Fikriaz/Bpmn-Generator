@@ -45,7 +45,7 @@ export default function UploadBpmnPage() {
         const canvas = viewerRef.current.get("canvas");
         canvas.zoom("fit-viewport");
       } catch (error) {
-        console.error("❌ Gagal render diagram:", error);
+        console.error(" Gagal render diagram:", error);
       }
     };
 
